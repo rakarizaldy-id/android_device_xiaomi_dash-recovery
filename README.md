@@ -16,6 +16,7 @@ OrangeFox Recovery device tree for Xiaomi `dash`, based on the MediaTek MT6991 p
 | Recovery layout | Recovery ramdisk in `vendor_boot` |
 | Data filesystem | F2FS |
 | Stock OS | Xiaomi HyperOS |
+| Fenrir | Supported |
 
 ## Status
 
@@ -35,6 +36,30 @@ OrangeFox Recovery device tree for Xiaomi `dash`, based on the MediaTek MT6991 p
 - Backup / Restore
 - Dynamic partition operations
 - Reboot modes
+
+## Installation
+
+Boot to fastboot and check the current slot:
+
+```text
+fastboot getvar current-slot
+```
+
+Flash the image to the matching `vendor_boot` slot:
+
+```text
+# Slot A
+fastboot flash vendor_boot_a OrangeFox-R12.0-Unofficial-dash-Beta1.img
+
+# Slot B
+fastboot flash vendor_boot_b OrangeFox-R12.0-Unofficial-dash-Beta1.img
+```
+
+Then reboot to recovery:
+
+```text
+fastboot reboot recovery
+```
 
 ## Source layout
 

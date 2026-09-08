@@ -1,4 +1,4 @@
-# D0.2 dash diagnostic recovery fstab — verified-boot mount verification intentionally disabled.
+# DASH recovery fstab
 system /system erofs ro wait,slotselect,logical,first_stage_mount
 system /system ext4 ro wait,slotselect,logical,first_stage_mount
 system_ext /system_ext erofs ro wait,slotselect,logical,first_stage_mount
