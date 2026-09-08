@@ -1,4 +1,4 @@
-# OrangeFox Recovery for POCO X8 Pro Max / Redmi Turbo 5 Max (`dash`)
+# OrangeFox Recovery for POCO X8 Pro Max (`dash`)
 
 OrangeFox Recovery device tree for Xiaomi `dash`, based on the MediaTek MT6991 platform and `vendor_boot` v4 layout.
 
