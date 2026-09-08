@@ -1,0 +1,13 @@
+on early-init
+    mkdir /metadata 0771 system system
+    mkdir /mnt/vendor 0755 root system
+    mkdir /mnt/vendor/persist 0771 root system
+    mkdir /mnt/vendor/mi_ext 0755 root system
+    mkdir /odm 0755 root root
+    mkdir /vendor_dlkm 0755 root root
+
+on init
+    setprop sys.usb.controller "16701000.usb0"
+
+on boot
+    setprop sys.usb.config adb

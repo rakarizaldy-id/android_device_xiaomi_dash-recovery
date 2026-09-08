@@ -1,0 +1,16 @@
+*.bak
+*.orig
+*.rej
+*.tmp
+*~
+.DS_Store
+Thumbs.db
+
+# Stock platform payloads are staged locally and are not redistributed.
+prebuilt/stock/vendor_boot.img
+prebuilt/stock/dtb/*.dtb
+proprietary/crypto/vendor/
+
+# Local build output and logs.
+out/
+*.log

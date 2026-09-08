@@ -1,0 +1,8 @@
+import /init.recovery.bootctl.rc
+import /init.recovery.project.rc
+import /init.recovery.crypto.rc
+import /init.recovery.touch.rc
+
+on init
+    setprop sys.usb.configfs 1
+    setprop sys.usb.controller "16701000.usb0"

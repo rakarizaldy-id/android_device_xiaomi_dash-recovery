@@ -1,0 +1,69 @@
+cc_library_shared {
+    name: "libdash_libcxx_compat",
+    srcs: ["src/libcxx_compat/libcxx_compat.cpp"],
+    compile_multilib: "64",
+    recovery: true,
+    stl: "none",
+    shared_libs: ["liblog"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+}
+
+cc_binary {
+    name: "dash_touch_report",
+    srcs: ["src/touch_report_launcher/main.cpp"],
+    compile_multilib: "64",
+    recovery: true,
+    stl: "none",
+    shared_libs: ["libdl"],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+}
+
+// DASH stock AIDL stable-C libraries exposed to the recovery linker.
+// Source blobs are stock DASH vendor payloads.
+cc_prebuilt_library_shared {
+    name: "dash_android.hardware.secure_element-V1-ndk",
+    srcs: ["proprietary/crypto/vendor/lib64/android.hardware.secure_element-V1-ndk.so"],
+    compile_multilib: "64",
+    recovery_available: true,
+    check_elf_files: false,
+    stl: "none",
+}
+
+cc_prebuilt_library_shared {
+    name: "dash_android.se.omapi-V1-ndk",
+    srcs: ["proprietary/crypto/vendor/lib64/android.se.omapi-V1-ndk.so"],
+    compile_multilib: "64",
+    recovery_available: true,
+    check_elf_files: false,
+    stl: "none",
+}
+
+// Recovery-native OMAPI bridge: publishes android.se.omapi over stock DASH eSE1.
+cc_binary {
+    name: "dash_omapi_bridge",
+    recovery: true,
+    srcs: ["src/omapi_bridge/omapi_bridge.cpp"],
+    generated_headers: [
+        "android.hardware.secure_element-V1-ndk-source",
+        "android.se.omapi-V1-ndk-source",
+    ],
+    shared_libs: [
+        "dash_android.hardware.secure_element-V1-ndk",
+        "dash_android.se.omapi-V1-ndk",
+        "libdash_libcxx_compat",
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}

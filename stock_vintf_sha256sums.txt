@@ -1,0 +1,2 @@
+0fa13e87fd880e6476624f1467cecaaab034afc27c8fd39d6ee535dcb8be7a00  android.hardware.boot-service.mtk.xml
+25fe85c1947d8efa93b30c6dce65e830d92f87bb1035f0b837674f4f57873ae5  android.hardware.health-service.example.xml

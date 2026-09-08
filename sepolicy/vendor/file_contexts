@@ -1,0 +1,3 @@
+# DASH stock misc partition. BootControl HAL expects misc_block_device.
+/dev/block/sdc1                    u:object_r:misc_block_device:s0
+/dev/block/by-name/misc            u:object_r:misc_block_device:s0
