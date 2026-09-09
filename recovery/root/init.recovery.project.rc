@@ -6,8 +6,6 @@ on early-init
     mkdir /odm 0755 root root
     mkdir /vendor_dlkm 0755 root root
 
-on init
-    setprop sys.usb.controller "16701000.usb0"
 
 on boot
     setprop sys.usb.config adb

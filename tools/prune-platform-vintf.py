@@ -16,10 +16,10 @@ removed = []
 for rel, expected in EXPECTED.items():
     p = root / rel
     if not p.is_file():
-        raise SystemExit(f"missing expected stock platform file: {rel}")
+        raise SystemExit(f"missing expected ID303 PLATFORM file: {rel}")
     got = hashlib.sha256(p.read_bytes()).hexdigest()
     if got != expected:
-        raise SystemExit(f"refusing to prune unexpected platform file: {rel} sha256={got}")
+        raise SystemExit(f"refusing to prune non-ID303 file: {rel} sha256={got}")
     p.unlink()
     removed.append(rel)
 print(f"PLATFORM_VINTF_PRUNED={len(removed)}")

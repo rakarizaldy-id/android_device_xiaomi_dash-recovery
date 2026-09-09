@@ -37,3 +37,15 @@ Always verify stock-derived files before using them in a build. Do not substitut
 The recovery ramdisk is built for the stock DASH `vendor_boot` v4 structure. The stock platform fragment, DTB, boot configuration, and other platform-owned components are not replaced by this device tree.
 
 Only the recovery-side content should be changed by recovery development.
+
+## Recovery USB OTG module preparation
+
+DASH stock DTBO advertises `mediatek,usb-offload` to the MTU3 host controller. The Android runtime provides the matching offload stack, but recovery does not use that Android userspace path.
+
+For the **recovery copy only**, prepare the matching stock `mtu3.ko` with:
+
+```text
+python3 tools/patch-recovery-mtu3-offload.py --input <stock-mtu3.ko> --output <recovery-mtu3.ko>
+```
+
+The tool performs a same-size, single-literal neutralization and refuses unexpected inputs. Do not modify the stock/system module. The Beta 2 recovery image uses this recovery-only preparation; DTB, DTBO and the stock platform authority are otherwise left unchanged.

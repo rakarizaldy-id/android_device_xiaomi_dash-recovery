@@ -11,9 +11,8 @@ PRODUCT_BUILD_VENDOR_BOOT_IMAGE := true
 PRODUCT_PROPERTY_OVERRIDES += \
     persist.sys.fuse.passthrough.enable=true \
     ro.twrp.vendor_boot=true \
-    ro.orangefox.device_model="POCO X8 Pro Max"
 
-# DASH stock crypto identity for recovery buildinfo. Keep AP2A/SDK34 userspace,
+# DASH ID303 crypto identity for recovery buildinfo. Keep AP2A/SDK34 userspace,
 # but expose the stock Android 16 OS/SPL identity to KeyMint before native FBE.
 PRODUCT_BUILD_PROP_OVERRIDES += \
     PLATFORM_VERSION_LAST_STABLE=16 \
@@ -26,14 +25,21 @@ AB_OTA_PARTITIONS += \
     system system_dlkm system_ext vbmeta vbmeta_system vbmeta_vendor \
     vendor vendor_boot vendor_dlkm
 
-# DASH recovery-local crypto payload.
+# DASH ID303 recovery-local crypto payload.
 $(call inherit-product, $(LOCAL_PATH)/crypto_payload.mk)
 $(call inherit-product, $(LOCAL_PATH)/vintf_payload.mk)
 
-# DASH-local loader for the stock DASH ODM host-touch implementation.
+# DASH-local loader for the stock ID303 ODM host-touch implementation.
 PRODUCT_PACKAGES += dash_touch_report
+
+# DASH maintainer artwork stays device-local instead of modifying OrangeFox global theme source.
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/assets/maintainer.png:$(TARGET_COPY_OUT_RECOVERY)/root/twres/images/Default/About/maintainer.png
 
 # DASH recovery-local hooks used by OrangeFox native module/startup paths.
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/recovery/root/system/bin/beforemodules.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/beforemodules.sh \
-    $(LOCAL_PATH)/recovery/root/system/bin/runatboot.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/runatboot.sh
+    $(LOCAL_PATH)/recovery/root/system/bin/runatboot.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/runatboot.sh \
+    $(LOCAL_PATH)/recovery/root/system/bin/prefastboot.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/prefastboot.sh \
+    $(LOCAL_PATH)/recovery/root/system/bin/postfastboot.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/postfastboot.sh \
+    $(LOCAL_PATH)/recovery/root/system/bin/fastbootd-touch.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/fastbootd-touch.sh

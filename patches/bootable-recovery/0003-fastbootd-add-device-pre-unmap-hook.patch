@@ -1,0 +1,27 @@
+From 5fd5d130498ce1647eef07a99c39d7806f960fe2 Mon Sep 17 00:00:00 2001
+From: Raka Rizaldy <rakarizaldy-id@users.noreply.github.com>
+Date: Wed, 9 Sep 2026 16:02:02 +0000
+Subject: [PATCH] fastbootd: add device pre-unmap hook
+
+---
+ twrp.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/twrp.cpp b/twrp.cpp
+index c9fdc572..dd328bb4 100644
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -115,6 +115,10 @@ static void Decrypt_Page(bool SkipDecryption, bool datamedia) {
+ static void process_fastbootd_mode() {
+ 		LOGINFO("starting fastboot\n");
+ 
++		// Give device trees a chance to release ROM-backed runtime users before
++		// dynamic partitions are unmapped for userspace fastboot.
++		TWFunc::RunFoxScript("/system/bin/prefastboot.sh", "");
++
+ 		if (android::base::GetBoolProperty("ro.boot.dynamic_partitions", false)) {
+ 			PartitionManager.Unmap_Super_Devices();
+ 		}
+-- 
+2.43.0
+

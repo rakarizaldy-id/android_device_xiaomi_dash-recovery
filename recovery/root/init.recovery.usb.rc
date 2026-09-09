@@ -1,4 +1,4 @@
-# DASH UDC
+# D0.2 DASH UDC
 on init
     setprop sys.usb.controller "16701000.usb0"
 

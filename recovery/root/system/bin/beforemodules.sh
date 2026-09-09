@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# DASH stock touch bootstrap. Runs before OrangeFox native vendor module loader.
+# DASH stock hardware bootstrap. Runs before OrangeFox native vendor module loader.
 # Stock logical partitions remain authority; mounts are read-only.
 
 [ "$(getprop ro.orangefox.fastbootd)" = "1" ] && exit 0
@@ -19,16 +19,22 @@ resolve_mapper() {
     [ -e "$dev" ] && echo "$dev"
 }
 
+vendor_dev="$(resolve_mapper vendor)"
 odm_dev="$(resolve_mapper odm)"
 dlkm_dev="$(resolve_mapper vendor_dlkm)"
 [ -n "$odm_dev" ] || exit 0
 [ -n "$dlkm_dev" ] || exit 0
 
-mkdir -p /odm /vendor_dlkm
+mkdir -p /odm /vendor_dlkm /tmp/vendor_stock
 mountpoint -q /odm || mount -t erofs -o ro "$odm_dev" /odm 2>/dev/null || mount -o ro "$odm_dev" /odm 2>/dev/null || exit 0
 mountpoint -q /vendor_dlkm || mount -t erofs -o ro "$dlkm_dev" /vendor_dlkm 2>/dev/null || mount -o ro "$dlkm_dev" /vendor_dlkm 2>/dev/null || exit 0
+if [ -n "$vendor_dev" ]; then
+    mountpoint -q /tmp/vendor_stock || mount -t erofs -o ro "$vendor_dev" /tmp/vendor_stock 2>/dev/null || mount -o ro "$vendor_dev" /tmp/vendor_stock 2>/dev/null || true
+fi
 if [ -w /sys/module/firmware_class/parameters/path ]; then
-    echo /vendor/firmware,/odm/firmware > /sys/module/firmware_class/parameters/path
+    fw_path="/odm/firmware,/vendor/firmware"
+    [ -d /tmp/vendor_stock/firmware ] && fw_path="/tmp/vendor_stock/firmware,$fw_path"
+    echo "$fw_path" > /sys/module/firmware_class/parameters/path
 fi
 
 moddir=/vendor_dlkm/lib/modules
@@ -39,7 +45,8 @@ for mod in \
     mtk_ioctl_touch_boost.ko \
     touch_boost.ko \
     xiaomi_touch_dash.ko \
-    nt38771_touch_dash.ko
+    nt38771_touch_dash.ko \
+    fs3002_haptic.ko
 do
     if [ ! -f "$moddir/$mod" ]; then
         echo "MISSING $moddir/$mod" >> "$log"

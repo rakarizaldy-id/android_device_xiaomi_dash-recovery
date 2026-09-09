@@ -54,7 +54,11 @@ TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
 TW_BRIGHTNESS_PATH := "/sys/class/leds/lcd-backlight/brightness"
 TW_MAX_BRIGHTNESS := 16383
 TW_DEFAULT_BRIGHTNESS := 1000
-TW_NO_SCREEN_BLANK := true
+
+# DASH MT6379 camera torch exposed through the native OrangeFox flashlight backend.
+OF_FLASHLIGHT_ENABLE := 1
+OF_FL_PATH1 := /sys/class/leds/white:flash-1
+OF_FL_PATH2 := /sys/class/leds/white:flash-2
 
 TW_INCLUDE_FASTBOOTD := true
 TW_INCLUDE_LPTOOLS := true
@@ -64,7 +68,7 @@ TW_INCLUDE_RESETPROP := true
 TW_INCLUDE_EROFS := true
 TW_EXCLUDE_DEFAULT_USB_INIT := true
 TW_USE_LEGACY_BATTERY_SERVICES := true
-TW_DEFAULT_LANGUAGE := en_US
+TW_DEFAULT_LANGUAGE := en
 RECOVERY_SDCARD_ON_DATA := true
 TW_HAS_MTP := true
 TW_MTP_DEVICE := /dev/mtp_usb
@@ -77,7 +81,7 @@ TW_INCLUDE_FBE := true
 TW_INCLUDE_FBE_METADATA_DECRYPT := true
 TW_USE_FSCRYPT_POLICY := 2
 
-# Stock DASH vendor SPL used by recovery prop.default / MiTEE KeyMint.
+# Stock ID303 vendor SPL used by recovery prop.default / MiTEE KeyMint.
 VENDOR_SECURITY_PATCH := 2026-08-01
 
 BOARD_AVB_ENABLE := true
@@ -86,8 +90,11 @@ BOARD_AVB_ENABLE := true
 OF_MANUAL_ROOT_VENDOR_ERROR_FIX := 1
 
 # DASH stock vendor_dlkm touch chain. OrangeFox resolves dependencies via stock modules.dep.
-TW_LOAD_VENDOR_MODULES := xiaomi_spi_tee.ko\ mtk_ioctl_touch_boost.ko\ touch_boost.ko\ xiaomi_touch_dash.ko\ nt38771_touch_dash.ko
+TW_LOAD_VENDOR_MODULES := usb_offload.ko\ mtk-composite.ko\ flashlight.ko\ leds-mt6379.ko\ leds-mt6379pmic.ko\ xiaomi_spi_tee.ko\ mtk_ioctl_touch_boost.ko\ touch_boost.ko\ xiaomi_touch_dash.ko\ nt38771_touch_dash.ko\ fs3002_haptic.ko
 TW_LOAD_VENDOR_MODULES_EXCLUDE_GKI := true
 
 # DASH recovery device-node labels required by stock BootControl HAL.
 BOARD_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
+
+# OrangeFox release identity
+OF_MAINTAINER := Raka Rizaldy

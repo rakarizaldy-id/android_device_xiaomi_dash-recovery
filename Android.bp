@@ -25,7 +25,7 @@ cc_binary {
 }
 
 // DASH stock AIDL stable-C libraries exposed to the recovery linker.
-// Source blobs are stock DASH vendor payloads.
+// Source blobs are exact stock DASH ID303 vendor payloads.
 cc_prebuilt_library_shared {
     name: "dash_android.hardware.secure_element-V1-ndk",
     srcs: ["proprietary/crypto/vendor/lib64/android.hardware.secure_element-V1-ndk.so"],

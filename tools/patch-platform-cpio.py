@@ -67,7 +67,7 @@ def patch(inp: Path, outp: Path, dry=False):
             trailers += 1; out.extend(src[start:entry_end]); pos = entry_end; continue
         if name in REMOVE:
             got = hashlib.sha256(data).hexdigest()
-            if got != REMOVE[name]: raise SystemExit(f"refusing unexpected platform prune {name}: {got}")
+            if got != REMOVE[name]: raise SystemExit(f"refusing non-ID303 prune {name}: {got}")
             removed_files.append((archive, name, got)); pos = entry_end; continue
         if name == FSTAB:
             fstab_seen += 1; fstab_before = hashlib.sha256(data).hexdigest()

@@ -1,6 +1,6 @@
 # OrangeFox Recovery for POCO X8 Pro Max (`dash`)
 
-OrangeFox Recovery device tree for Xiaomi `dash`, based on the MediaTek MT6991 platform and `vendor_boot` v4 layout.
+OrangeFox Recovery device tree for Xiaomi `dash`, based on MediaTek MT6991 with a `vendor_boot` v4 / Virtual A/B layout.
 
 ## Device information
 
@@ -18,24 +18,26 @@ OrangeFox Recovery device tree for Xiaomi `dash`, based on the MediaTek MT6991 p
 | Stock OS | Xiaomi HyperOS |
 | Fenrir | Supported |
 
-## Status
+## Status — Beta 2
 
 ### Working
-
 - Recovery boot
 - Display and touchscreen
-- FBE metadata decryption
-- PIN/password decryption
+- FBE metadata and PIN/password decryption
 - Internal storage
-
-### Pending validation
-
-- FastbootD
-- MTP
-- Format Data
+- MTP / ADB / sideload
 - Backup / Restore
-- Dynamic partition operations
 - Reboot modes
+- ZIP/image flashing
+- Haptics
+- Flashlight
+- USB OTG host storage
+- FastbootD userspace transport
+
+### Pending validation / known issue
+- FastbootD touchscreen
+- Format Data
+- Dynamic partition operations
 
 ## Installation
 
@@ -45,14 +47,14 @@ Boot to fastboot and check the current slot:
 fastboot getvar current-slot
 ```
 
-Flash the image to the matching `vendor_boot` slot:
+Flash Beta 2 to the matching `vendor_boot` slot:
 
 ```text
 # Slot A
-fastboot flash vendor_boot_a OrangeFox-R12.0-Unofficial-dash-Beta1.img
+fastboot flash vendor_boot_a OrangeFox-R12.0-Unofficial-dash-Beta2.img
 
 # Slot B
-fastboot flash vendor_boot_b OrangeFox-R12.0-Unofficial-dash-Beta1.img
+fastboot flash vendor_boot_b OrangeFox-R12.0-Unofficial-dash-Beta2.img
 ```
 
 Then reboot to recovery:
@@ -64,38 +66,26 @@ fastboot reboot recovery
 ## Source layout
 
 ```text
-recovery/      Recovery ramdisk configuration
+assets/        OrangeFox device resources
+patches/       Small OrangeFox core patches required by DASH
+recovery/      Recovery ramdisk configuration and runtime helpers
 sepolicy/      Recovery SELinux policy
 src/           Device-specific recovery helpers
-tools/         Stock preparation and verification tools
-prebuilt/      Stock platform files used locally
-proprietary/   Stock proprietary files used locally
+tools/         Stock preparation, repack and verification tools
+prebuilt/      Stock platform files supplied locally
+proprietary/   Stock proprietary files supplied locally
 ```
 
 ## Building
 
-Clone this tree to:
+Clone this tree to `device/xiaomi/dash`. Matching stock DASH payloads are required locally and are intentionally not redistributed here; see [`STOCK_PAYLOADS.md`](STOCK_PAYLOADS.md).
 
-```text
-device/xiaomi/dash
-```
-
-Required stock files are taken from matching DASH firmware and verified before use. See [`STOCK_PAYLOADS.md`](STOCK_PAYLOADS.md).
-
-## Compatibility
-
-Validated stock baseline:
-
-```text
-OS3.0.303.0.WPLIDXM
-```
+Validated stock baseline: `OS3.0.303.0.WPLIDXM`.
 
 ## Credits
-
 - OrangeFox Recovery Project
 - TeamWin Recovery Project
 - Android Open Source Project
 
 ## Disclaimer
-
-Use at your own risk. Make sure the image and firmware match the target device before flashing.
+Use at your own risk. Make sure the recovery image and firmware match the target device before flashing.

@@ -1,0 +1,6 @@
+# DASH fastbootd runtime prerequisites.
+# Health can start immediately; touch waits until the tmpfs-backed ODM view exists.
+on property:ro.twrp.fastbootd=1
+    start health-hal-2-1
+
+
