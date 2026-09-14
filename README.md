@@ -34,7 +34,8 @@
 - Flashlight
 - Screenshots
 
-The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
+
+##The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
 
 An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
 
