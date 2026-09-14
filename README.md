@@ -1,5 +1,8 @@
 # OrangeFox Recovery for POCO X8 Pro Max (`dash`)
 
+Unofficial OrangeFox R12.0 recovery for Xiaomi/POCO `dash`.
+
+> **Tested baseline:** HyperOS `OS3.0.303.0.WPLIDXM` · Android 16
 
 ## Device information
 
@@ -34,12 +37,11 @@
 - Flashlight
 - Screenshots
 
+The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
 
-##
-- The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
+An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
 
-- An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
-
+## Downloads
 
 | File | Description |
 | --- | --- |
@@ -72,7 +74,7 @@ fastboot reboot recovery
 
 ## AOSP / LineageOS
 
-The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs.
+The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs. HyperOS users should use the full `.img` release.
 
 ## Source layout
 
