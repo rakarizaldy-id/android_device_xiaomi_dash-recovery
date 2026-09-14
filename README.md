@@ -38,9 +38,6 @@ The full `vendor_boot` image is the tested and recommended installation method f
 
 An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
 
-## Downloads
-
-Release assets are available from the repository **Releases** page.
 
 | File | Description |
 | --- | --- |
