@@ -1,7 +1,5 @@
 # OrangeFox Recovery for POCO X8 Pro Max (`dash`)
 
-Unofficial OrangeFox R12.0 recovery device tree for Xiaomi `dash`
-
 
 ## Device information
 
@@ -75,7 +73,7 @@ fastboot reboot recovery
 
 ## AOSP / LineageOS
 
-The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs. HyperOS users should use the full `.img` release.
+The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs.
 
 ## Source layout
 
