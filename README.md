@@ -1,84 +1,106 @@
 # OrangeFox Recovery for POCO X8 Pro Max / Redmi Turbo 5 Max (`dash`)
 
-Unofficial OrangeFox R12.0 device tree for Xiaomi `dash`, based on MediaTek MT6991 and a `vendor_boot` v4 / Virtual A/B layout.
+Unofficial OrangeFox R12.0 recovery device tree for Xiaomi `dash`, based on MediaTek MT6991 with a `vendor_boot` v4 / Virtual A/B layout.
 
 > **Tested baseline:** HyperOS `OS3.0.303.0.WPLIDXM` · Android 16
 
-## Device
+## Device information
 
-| Item | Value |
+| Specification | Value |
 | --- | --- |
+| Device | POCO X8 Pro Max / Redmi Turbo 5 Max |
 | Codename | `dash` |
-| Devices | POCO X8 Pro Max / Redmi Turbo 5 Max |
-| SoC | MediaTek Dimensity 9500s / MT6991 |
+| SoC | MediaTek Dimensity 9500s |
+| Platform | `mt6991` |
 | Architecture | ARM64 |
 | Partition scheme | Virtual A/B |
-| Recovery carrier | `vendor_boot` v4 recovery fragment |
+| Vendor boot header | v4 |
+| Recovery layout | Recovery ramdisk in `vendor_boot` |
 | Data filesystem | F2FS |
-| Recovery | OrangeFox R12.0 Unofficial |
+| Stock OS | Xiaomi HyperOS |
 
-## Release status
+## Status — Stable
 
-The HyperOS `vendor_boot` image is the tested and recommended installation path. The AOSP/Lineage installer is provided separately for compatible `vendor_boot` v4 carriers and remains experimental until validated per ROM.
+### Working
 
-| Component | Status |
-| --- | --- |
-| Recovery boot / display / touch | Working |
-| HyperOS FBE PIN/password decrypt | Working |
-| Internal storage / MTP / ADB / sideload | Working |
-| Backup / Restore | Working |
-| FastbootD / reboot modes | Working |
-| USB OTG / haptics / flashlight / screenshot | Working |
-| Shared OrangeFox settings lifecycle | Working |
-| Advanced Wipe `Cache` | Working; wipe-only |
-| Format Data | Not release-certified destructively |
-| Destructive dynamic-partition operations | Not release-certified |
-| AOSP / Lineage ROM-native installer | Experimental |
+- Recovery boot
+- Display and touchscreen
+- FBE metadata and PIN/password decryption
+- Internal storage
+- MTP / ADB / sideload
+- Backup / Restore
+- ZIP and image flashing
+- Reboot modes
+- FastbootD
+- USB OTG host storage
+- Haptics
+- Flashlight
+- Screenshots
+
+The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
+
+An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
 
 ## Downloads
 
-Use the repository **Releases** page.
+Release assets are available from the repository **Releases** page.
 
-| Asset | Use |
+| File | Description |
 | --- | --- |
-| `OrangeFox-R12.0-Unofficial-dash.img` | Tested full 64 MiB `vendor_boot` image for the supported HyperOS baseline |
-| `OrangeFox-R12.0-Unofficial-dash-AOSP-Lineage-Installer.zip` | Experimental ROM-native installer for compatible AOSP/Lineage `vendor_boot` v4 carriers |
+| `OrangeFox-R12.0-Unofficial-dash.img` | OrangeFox recovery image for the supported HyperOS baseline |
+| `OrangeFox-R12.0-Unofficial-dash-AOSP-Lineage-Installer.zip` | Experimental installer for compatible AOSP / LineageOS ROMs |
 
-## Installation — HyperOS
+## Installation
 
-Check the active slot first:
+Boot to fastboot and check the current slot:
 
 ```text
 fastboot getvar current-slot
 ```
 
-Flash **only the active slot**:
+Flash the image to the active `vendor_boot` slot:
 
 ```text
+# Slot A
 fastboot flash vendor_boot_a OrangeFox-R12.0-Unofficial-dash.img
-# or, when the active slot is b:
+
+# Slot B
 fastboot flash vendor_boot_b OrangeFox-R12.0-Unofficial-dash.img
+```
+
+Then reboot to recovery:
+
+```text
 fastboot reboot recovery
 ```
 
-Do not use `fastboot -w` for a normal recovery installation.
+## AOSP / LineageOS
 
-## AOSP / Lineage installer
+The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs. HyperOS users should use the full `.img` release.
 
-The ZIP repacks the current compatible `vendor_boot` carrier and replaces its recovery fragment with OrangeFox while preserving carrier-owned platform data. It is **experimental** and should not be treated as universally compatible across ROMs.
+## Source layout
 
-For stock HyperOS, use the full `.img`; the stock carrier does not have enough fragment headroom for the ROM-native installer path.
+```text
+compat/        Compatibility modules
+patches/       OrangeFox compatibility patches for DASH
+recovery/      Recovery ramdisk configuration and runtime helpers
+sepolicy/      Recovery SELinux policy
+src/           Device-specific recovery helpers
+tools/         Build and packaging tools
+```
 
 ## Building
 
-Clone this repository as `device/xiaomi/dash`, apply the patches with `tools/apply-foundation-patches.sh`, provide the required local stock payloads, then build with `tools/build-dash-release.sh`.
+Clone this repository to `device/xiaomi/dash`, provide the required local stock payloads, apply the included patches, and build OrangeFox R12.0.
 
-This public repository intentionally does **not** redistribute Xiaomi/MediaTek proprietary binaries, trusted applications, firmware, or private runtime prebuilts. See [`STOCK_PAYLOADS.md`](STOCK_PAYLOADS.md).
+Matching Xiaomi/MediaTek proprietary payloads are intentionally not redistributed in this public repository. See [`STOCK_PAYLOADS.md`](STOCK_PAYLOADS.md).
 
 ## Credits
 
-OrangeFox Recovery Project · TeamWin Recovery Project · Android Open Source Project
+- OrangeFox Recovery Project
+- TeamWin Recovery Project
+- Android Open Source Project
 
 ## Disclaimer
 
-Unofficial recovery software. Verify the target device, active slot, firmware baseline, and release checksums before flashing.
+This is an unofficial recovery build. Verify the target device, active slot, firmware baseline, and release checksums before flashing.
