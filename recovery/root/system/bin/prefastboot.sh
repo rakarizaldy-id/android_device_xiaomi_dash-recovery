@@ -1,34 +1,62 @@
 #!/system/bin/sh
-# Release the current-ROM ODM touch reporter before super is unmapped.
-# Its userspace payload was staged during normal recovery boot.
+
 log=/tmp/dash_prefastboot.log
 stage=/tmp/dash-fastbootd-odm
 : > "$log"
-echo "DASH_FBD PRE start" > /dev/kmsg 2>/dev/null || true
 
-[ -f "$stage/lib64/libtouchreport.so" ] || {
-    echo "FAIL no_early_stage" >> "$log"
-    echo "DASH_FBD PRE no_early_stage" > /dev/kmsg 2>/dev/null || true
-    exit 0
-}
-echo "PASS early_stage libs=$(ls "$stage/lib64" 2>/dev/null | wc -l) fw=$(ls "$stage/firmware" 2>/dev/null | wc -l)" >> "$log"
-echo "DASH_FBD PRE staged_fw=$(ls "$stage/firmware"/novatek*.bin 2>/dev/null | wc -l)" > /dev/kmsg 2>/dev/null || true
+slot="$(getprop ro.boot.slot_suffix)"
+case "$slot" in
+    _a|_b) ;;
+    a|b) slot="_$slot" ;;
+    *) echo "FAIL invalid_slot=$slot" >>"$log"; exit 0 ;;
+esac
 
-pids="$(pidof dash_touch_report 2>/dev/null)"
-[ -n "$pids" ] && kill $pids 2>/dev/null
+part="odm${slot}"
+mapper="/dev/block/mapper/${part}"
+mapped_by_us=0
+mounted_by_us=0
+
+if [ ! -e "$mapper" ]; then
+    /system/bin/lptools map "$part" >>"$log" 2>&1
+    [ "$?" -eq 0 ] && mapped_by_us=1
+fi
+
 for i in 1 2 3 4 5; do
-    pidof dash_touch_report >/dev/null 2>&1 || break
+    [ -e "$mapper" ] && break
     sleep 1
 done
-pids="$(pidof dash_touch_report 2>/dev/null)"
-[ -n "$pids" ] && kill -9 $pids 2>/dev/null
-sync
+[ -e "$mapper" ] || exit 0
 
-if lsof 2>/dev/null | grep -q "/odm/"; then
-    echo "WARN odm_still_busy" >> "$log"
-    lsof 2>/dev/null | grep "/odm/" >> "$log"
-else
-    echo "PASS odm_released" >> "$log"
-    echo "DASH_FBD PRE odm_released" > /dev/kmsg 2>/dev/null || true
+mkdir -p /odm
+if ! grep -qs " /odm " /proc/mounts; then
+    mount -t erofs -o ro "$mapper" /odm >>"$log" 2>&1
+    [ "$?" -eq 0 ] && mounted_by_us=1
 fi
+grep -qs " /odm " /proc/mounts || {
+    [ "$mapped_by_us" -eq 1 ] && /system/bin/lptools unmap "$part" >>"$log" 2>&1
+    exit 0
+}
+
+rm -rf "$stage"
+mkdir -p "$stage/lib64" "$stage/firmware"
+
+for f in /odm/lib64/libtouchreport*.so /odm/lib64/libtensorflowlite_touch_c.so; do
+    [ -f "$f" ] && cp -p "$f" "$stage/lib64/" >>"$log" 2>&1
+done
+
+for f in \
+    /odm/firmware/*.tflite \
+    /odm/firmware/novatek*.bin \
+    /odm/firmware/p10u_nova_csot_thp_config.ini
+do
+    [ -f "$f" ] && cp -p "$f" "$stage/firmware/" >>"$log" 2>&1
+done
+
+if [ "$mounted_by_us" -eq 1 ]; then
+    umount /odm >>"$log" 2>&1
+fi
+if [ "$mapped_by_us" -eq 1 ]; then
+    /system/bin/lptools unmap "$part" >>"$log" 2>&1
+fi
+
 exit 0

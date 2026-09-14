@@ -1,0 +1,386 @@
+diff --git a/Android.bp b/Android.bp
+index 376157b..d76510d 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -178,7 +178,7 @@ cc_library_static {
+         "android.hardware.health.storage-V1-ndk_platform",
+         "android.hardware.keymaster@4.1",
+         "android.hardware.security.keymint-V1-ndk_platform",
+-        "android.hardware.weaver@1.0",
++        "android.hardware.weaver-V1-ndk_platform",
+         "android.security.apc-ndk_platform",
+         "android.system.keystore2-V1-ndk_platform",
+         "android.security.authorization-ndk_platform",
+diff --git a/KeyUtil.cpp b/KeyUtil.cpp
+index 9273564..25c969e 100644
+--- a/KeyUtil.cpp
++++ b/KeyUtil.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "KeyUtil.h"
+ 
++#include <cerrno>
+ #include <iomanip>
+ #include <sstream>
+ #include <string>
+@@ -148,10 +149,26 @@ static std::string buildLegacyKeyName(const std::string& prefix, const std::stri
+ // old to support FS_IOC_ADD_ENCRYPTION_KEY and FS_IOC_REMOVE_ENCRYPTION_KEY.
+ static bool fscryptKeyring(key_serial_t* device_keyring) {
+     *device_keyring = keyctl_search(KEY_SPEC_SESSION_KEYRING, "keyring", "fscrypt", 0);
+-    if (*device_keyring == -1) {
++    if (*device_keyring != -1) {
++        return true;
++    }
++
++    const int search_errno = errno;
++    if (search_errno != ENOKEY) {
++        errno = search_errno;
+         PLOG(ERROR) << "Unable to find device keyring";
+         return false;
+     }
++
++    // Recovery does not execute Android init's `installkey` builtin.
++    // Create the same session-level fscrypt keyring here so provisioning
++    // keys can be retained after FS_IOC_ADD_ENCRYPTION_KEY succeeds.
++    *device_keyring = add_key("keyring", "fscrypt", nullptr, 0, KEY_SPEC_SESSION_KEYRING);
++    if (*device_keyring == -1) {
++        PLOG(ERROR) << "DASH_FSCRYPT: failed to create fscrypt session keyring";
++        return false;
++    }
++    LOG(INFO) << "DASH_FSCRYPT: created fscrypt session keyring id=" << *device_keyring;
+     return true;
+ }
+ 
+@@ -251,8 +268,21 @@ static bool installFsKeyringKey(const std::string& mountpoint, const EncryptionO
+         return false;
+     }
+ 
+-    if (ioctl(fd, FS_IOC_ADD_ENCRYPTION_KEY, arg) != 0) {
+-        PLOG(ERROR) << "Failed to install fscrypt key to " << mountpoint;
++    errno = 0;
++    const int rc = ioctl(fd, FS_IOC_ADD_ENCRYPTION_KEY, arg);
++    const int saved_errno = errno;
++    LOG(ERROR) << "DASH_FSCRYPT: FS_IOC_ADD_ENCRYPTION_KEY"
++               << " rc=" << rc
++               << " errno=" << saved_errno
++               << " mount=" << mountpoint
++               << " policy_version=" << options.version
++               << " hw_wrapped=" << options.use_hw_wrapped_key
++               << " raw_size=" << arg->raw_size
++               << " flags=" << arg->__flags
++               << " key_spec_type=" << arg->key_spec.type;
++    if (rc != 0) {
++        errno = saved_errno;
++        PLOG(ERROR) << "DASH_FSCRYPT: Failed to install fscrypt key to " << mountpoint;
+         return false;
+     }
+ 
+diff --git a/Weaver1.cpp b/Weaver1.cpp
+index ea357ed..4185f8c 100644
+--- a/Weaver1.cpp
++++ b/Weaver1.cpp
+@@ -1,127 +1,107 @@
+ /*
+  * Copyright (C) 2017 Team Win Recovery Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-/* To the best of my knowledge there is no native implementation for
+- * Weaver so I made this by looking at the IWeaver.h file that gets
+- * compiled by the build system. I took the information from this header
+- * file and looked at keymaster source to get an idea of the proper way
+- * to write the functions.
++ * AIDL Weaver transport adaptation for modern Android devices.
+  */
+ 
+ #include "Weaver1.h"
+ 
+-//#include <android-base/logging.h>
+-//#include <keystore/keymaster_tags.h>
+-//#include <keystore/authorization_set.h>
+-//#include <keystore/keystore_hidl_support.h>
+-
+-#include <android/hardware/weaver/1.0/IWeaver.h>
+-
++#include <aidl/android/hardware/weaver/IWeaver.h>
++#include <aidl/android/hardware/weaver/WeaverConfig.h>
++#include <aidl/android/hardware/weaver/WeaverReadResponse.h>
++#include <android/binder_manager.h>
++#include <android/binder_process.h>
+ #include <iostream>
+-#define ERROR 1
+-#define LOG(x) std::cout
+ 
+-using namespace android::hardware::weaver;
+-using android::hardware::hidl_string;
+-using ::android::hardware::weaver::V1_0::IWeaver;
+-using ::android::hardware::weaver::V1_0::WeaverConfig;
+-using ::android::hardware::weaver::V1_0::WeaverReadStatus;
+-using ::android::hardware::weaver::V1_0::WeaverReadResponse;
+-using ::android::hardware::weaver::V1_0::WeaverStatus;
+-using ::android::hardware::Return;
+-using ::android::sp;
++using ::aidl::android::hardware::weaver::IWeaver;
++using ::aidl::android::hardware::weaver::WeaverConfig;
++using ::aidl::android::hardware::weaver::WeaverReadResponse;
++using ::ndk::SpAIBinder;
+ 
+ namespace android {
+ namespace vold {
+ 
+ Weaver::Weaver() {
+-	mDevice = ::android::hardware::weaver::V1_0::IWeaver::getService();
+-	GottenConfig = false;
++    const std::string instance = std::string(IWeaver::descriptor) + "/default";
++    mDevice = IWeaver::fromBinder(SpAIBinder(AServiceManager_waitForService(instance.c_str())));
++    GottenConfig = false;
++    if (!mDevice) {
++        std::cout << "DASH_WEAVER: failed to get AIDL service " << instance << std::endl;
++    } else {
++        std::cout << "DASH_WEAVER: connected AIDL service " << instance << std::endl;
++    }
+ }
+ 
+ bool Weaver::GetConfig() {
+-	if (GottenConfig)
+-		return true;
+-
+-	WeaverStatus status;
+-	WeaverConfig cfg;
+-
+-	bool callbackCalled = false;
+-	auto ret = mDevice->getConfig([&](WeaverStatus s, WeaverConfig c) {
+-		callbackCalled = true;
+-		status = s;
+-		cfg = c;
+-	});
+-	if (ret.isOk() && callbackCalled && status == WeaverStatus::OK) {
+-		config = cfg;
+-		GottenConfig = true;
+-		return true;
+-	}
+-	return false;
++    if (GottenConfig) return true;
++    if (!mDevice) return false;
++
++    WeaverConfig cfg;
++    auto ret = mDevice->getConfig(&cfg);
++    if (!ret.isOk()) {
++        std::cout << "DASH_WEAVER: getConfig failed exception=" << ret.getExceptionCode()
++                  << " service_error=" << ret.getServiceSpecificError() << std::endl;
++        return false;
++    }
++    if (cfg.slots < 0 || cfg.keySize <= 0 || cfg.valueSize <= 0) {
++        std::cout << "DASH_WEAVER: invalid config slots=" << cfg.slots
++                  << " keySize=" << cfg.keySize << " valueSize=" << cfg.valueSize << std::endl;
++        return false;
++    }
++    mSlots = static_cast<uint32_t>(cfg.slots);
++    mKeySize = static_cast<uint32_t>(cfg.keySize);
++    mValueSize = static_cast<uint32_t>(cfg.valueSize);
++    GottenConfig = true;
++    std::cout << "DASH_WEAVER: config slots=" << mSlots
++              << " keySize=" << mKeySize << " valueSize=" << mValueSize << std::endl;
++    return true;
+ }
+ 
+ bool Weaver::GetSlots(uint32_t* slots) {
+-	if (!GetConfig())
+-		return false;
+-	*slots = config.slots;
+-	return true;
++    if (!GetConfig()) return false;
++    *slots = mSlots;
++    return true;
+ }
+ 
+ bool Weaver::GetKeySize(uint32_t* keySize) {
+-	if (!GetConfig())
+-		return false;
+-	*keySize = config.keySize;
+-	return true;
++    if (!GetConfig()) return false;
++    *keySize = mKeySize;
++    return true;
+ }
+ 
+ bool Weaver::GetValueSize(uint32_t* valueSize) {
+-	if (!GetConfig())
+-		return false;
+-	*valueSize = config.valueSize;
+-	return true;
++    if (!GetConfig()) return false;
++    *valueSize = mValueSize;
++    return true;
+ }
+ 
+-// TODO: we should return more information about the status including time delays before the next retry
+-bool Weaver::WeaverVerify(const uint32_t slot, const void* weaver_key, std::vector<uint8_t>* payload) {
+-	bool callbackCalled = false;
+-	WeaverReadStatus status;
+-	std::vector<uint8_t> readValue;
+-	uint32_t timeout;
+-	uint32_t keySize;
+-	if (!GetKeySize(&keySize))
+-		return false;
+-	std::vector<uint8_t> key;
+-	key.resize(keySize);
+-	uint32_t index = 0;
+-	unsigned char* ptr = (unsigned char*)weaver_key;
+-	for (index = 0; index < keySize; index++) {
+-		key[index] = *ptr;
+-		ptr++;
+-	}
+-	const auto readRet = mDevice->read(slot, key, [&](WeaverReadStatus s, WeaverReadResponse r) {
+-		callbackCalled = true;
+-		status = s;
+-		readValue = r.value;
+-		timeout = r.timeout;
+-	});
+-	if (readRet.isOk() && callbackCalled && status == WeaverReadStatus::OK && timeout == 0) {
+-		*payload = readValue;
+-		return true;
+-	}
+-	return false;
++bool Weaver::WeaverVerify(const uint32_t slot, const void* weaver_key,
++                          std::vector<uint8_t>* payload) {
++    if (!mDevice) return false;
++
++    uint32_t keySize = 0;
++    if (!GetKeySize(&keySize)) return false;
++
++    const auto* ptr = static_cast<const uint8_t*>(weaver_key);
++    std::vector<uint8_t> key(ptr, ptr + keySize);
++    WeaverReadResponse response;
++    auto ret = mDevice->read(static_cast<int32_t>(slot), key, &response);
++    if (!ret.isOk()) {
++        std::cout << "DASH_WEAVER: read failed slot=" << slot
++                  << " exception=" << ret.getExceptionCode()
++                  << " service_error=" << ret.getServiceSpecificError()
++                  << " timeout=" << response.timeout << std::endl;
++        return false;
++    }
++    if (response.timeout != 0) {
++        std::cout << "DASH_WEAVER: read throttled slot=" << slot
++                  << " timeout=" << response.timeout << std::endl;
++        return false;
++    }
++
++    *payload = response.value;
++    std::cout << "DASH_WEAVER: read success slot=" << slot
++              << " payload_size=" << payload->size() << std::endl;
++    return true;
+ }
+ 
+ }  // namespace vold
+diff --git a/Weaver1.h b/Weaver1.h
+index 22f401e..de237e9 100644
+--- a/Weaver1.h
++++ b/Weaver1.h
+@@ -1,64 +1,50 @@
+ /*
+  * Copyright (C) 2017 Team Win Recovery Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
++ * AIDL Weaver transport adaptation for modern Android devices.
+  */
+-
+-/* To the best of my knowledge there is no native implementation for
+- * Weaver so I made this by looking at the IWeaver.h file that gets
+- * compiled by the build system. I took the information from this header
+- * file and looked at keymaster source to get an idea of the proper way
+- * to write the functions.
+- */
+-
+ #ifndef TWRP_WEAVER_H
+ #define TWRP_WEAVER_H
+ 
++#include <cstdint>
+ #include <memory>
+-#include <string>
+-#include <utility>
++#include <vector>
+ 
+-#include <android/hardware/weaver/1.0/IWeaver.h>
+ #include "Utils.h"
+ 
++namespace aidl {
++namespace android {
++namespace hardware {
++namespace weaver {
++class IWeaver;
++}  // namespace weaver
++}  // namespace hardware
++}  // namespace android
++}  // namespace aidl
++
+ namespace android {
+ namespace vold {
+-using ::android::hardware::weaver::V1_0::IWeaver;
+ 
+-// Wrapper for a Weaver device
+ class Weaver {
+-	public:
+-		Weaver();
+-		// false if we failed to open the weaver device.
+-		explicit operator bool() { return mDevice.get() != nullptr; }
+-
+-		bool GetSlots(uint32_t* slots);
+-		bool GetKeySize(uint32_t* keySize);
+-		bool GetValueSize(uint32_t* valueSize);
+-		// TODO: we should return more information about the status including time delays before the next retry
+-		bool WeaverVerify(const uint32_t slot, const void* weaver_key, std::vector<uint8_t>* payload);
+-
+-	private:
+-		sp<hardware::weaver::V1_0::IWeaver> mDevice;
+-		hardware::weaver::V1_0::WeaverConfig config;
+-		bool GottenConfig;
+-
+-		bool GetConfig();
+-
+-		DISALLOW_COPY_AND_ASSIGN(Weaver);
++  public:
++    Weaver();
++    explicit operator bool() { return mDevice != nullptr; }
++
++    bool GetSlots(uint32_t* slots);
++    bool GetKeySize(uint32_t* keySize);
++    bool GetValueSize(uint32_t* valueSize);
++    bool WeaverVerify(uint32_t slot, const void* weaver_key, std::vector<uint8_t>* payload);
++
++  private:
++    std::shared_ptr<::aidl::android::hardware::weaver::IWeaver> mDevice;
++    uint32_t mSlots = 0;
++    uint32_t mKeySize = 0;
++    uint32_t mValueSize = 0;
++    bool GottenConfig = false;
++
++    bool GetConfig();
++    DISALLOW_COPY_AND_ASSIGN(Weaver);
+ };
+ 
+ }  // namespace vold
+ }  // namespace android
+-
+ #endif

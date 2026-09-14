@@ -1,10 +1,6 @@
 DEVICE_PATH := device/xiaomi/dash
 DASH_CRYPTO_ROOT := $(DEVICE_PATH)/proprietary/crypto
 
-PRODUCT_PACKAGES += \
-    libdash_libcxx_compat \
-    dash_omapi_bridge
-
 DASH_CRYPTO_HW_BIN := \
     android.hardware.gatekeeper-service.mitee \
     android.hardware.security.keymint@3.0-service.mitee \
@@ -35,6 +31,10 @@ DASH_CRYPTO_LIB64 := \
 PRODUCT_COPY_FILES += \
     $(foreach f,$(DASH_CRYPTO_LIB64),$(DASH_CRYPTO_ROOT)/vendor/lib64/$(f):recovery/root/vendor/lib64/$(f)) \
     $(DASH_CRYPTO_ROOT)/vendor/etc/hal_uuid_map_dash.xml:recovery/root/vendor/etc/hal_uuid_map_dash.xml
+
+PRODUCT_COPY_FILES += \
+    $(DASH_CRYPTO_ROOT)/system/lib64/android.hardware.gatekeeper-V1-ndk.so:recovery/root/system/lib64/android.hardware.gatekeeper-V1-ndk.so \
+    $(DASH_CRYPTO_ROOT)/system/lib64/android.hardware.weaver-V2-ndk.so:recovery/root/system/lib64/android.hardware.weaver-V2-ndk.so
 
 DASH_CRYPTO_VINTF := \
     android.hardware.gatekeeper-service.mitee.xml \

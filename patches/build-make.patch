@@ -1,0 +1,528 @@
+diff --git a/core/Makefile b/core/Makefile
+index 51c3bf1..798cd9b 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -186,7 +186,6 @@ include $(BUILD_SYSTEM)/sysprop.mk
+ 
+ # -----------------------------------------------------------------
+ # sdk-build.prop
+-#
+ # There are certain things in build.prop that we don't want to
+ # ship with the sdk; remove them.
+ 
+@@ -1189,6 +1188,37 @@ $(INSTALLED_VENDOR_BOOTIMAGE_TARGET): $(AVBTOOL) $(BOARD_AVB_VENDOR_BOOTIMAGE_KE
+ 	   --partition_size $(BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE) \
+ 	   --partition_name vendor_boot $(INTERNAL_AVB_VENDOR_BOOT_SIGNING_ARGS) \
+ 	   $(BOARD_AVB_VENDOR_BOOT_ADD_HASH_FOOTER_ARGS)
++
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++	FOX_MANIFEST_VER="12.1" \
++	FOX_DISABLE_UPDATEZIP="$(FOX_DISABLE_UPDATEZIP)" \
++	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++	RECOVERY_RAMDISK_COMPRESSOR="$(RECOVERY_RAMDISK_COMPRESSOR)" \
++	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++	vendor_ramdisk="$(INTERNAL_VENDOR_RAMDISK_TARGET)" \
++	INSTALLED_VENDOR_BOOTIMAGE_TARGET="$(INSTALLED_VENDOR_BOOTIMAGE_TARGET)" \
++	BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE=$(BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE) \
++	INTERNAL_VENDOR_BOOTIMAGE_ARGS='"$(INTERNAL_VENDOR_BOOTIMAGE_ARGS)"' \
++	BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=$(BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT) \
++	BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT=$(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT) \
++	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++
+ else
+ $(INSTALLED_VENDOR_BOOTIMAGE_TARGET):
+ 	$(call pretty,"Target vendor_boot image: $@")
+@@ -1199,12 +1229,10 @@ endif # BUILDING_VENDOR_BOOT_IMAGE
+ 
+ # -----------------------------------------------------------------
+ # NOTICE files
+-#
+ # We are required to publish the licenses for all code under BSD, GPL and
+ # Apache licenses (and possibly other more exotic ones as well). We err on the
+ # side of caution, so the licenses for other third-party code are included here
+ # too.
+-#
+ # This needs to be before the systemimage rules, because it adds to
+ # ALL_DEFAULT_INSTALLED_MODULES, which those use to pick which files
+ # go into the systemimage.
+@@ -1223,15 +1251,12 @@ endif # BUILDING_VENDOR_BOOT_IMAGE
+ #		 directories in there will be used for scratch
+ # $(6) - Dependencies for the output files
+ # $(7) - Directories to exclude
+-#
+ # The algorithm here is that we go collect a hash for each of the notice
+ # files and write the names of the files that match that hash.  Then
+ # to generate the real files, we go print out all of the files and their
+ # hashes.
+-#
+ # These rules are fairly complex, so they depend on this makefile so if
+ # it changes, they'll run again.
+-#
+ # TODO: We could clean this up so that we just record the locations of the
+ # original notice files instead of making rules to copy them somwehere.
+ # Then we could traverse that without quite as much bash drama.
+@@ -2103,7 +2128,6 @@ endif
+ #   boot.img + recovery-from-boot.p + recovery-resource.dat = recovery.img.
+ # recovery-resource.dat is needed only if we carry an imgdiff patch of the boot and recovery images
+ # and invoke install-recovery.sh on the first boot post an OTA update.
+-#
+ # We no longer need that if one of the following conditions holds:
+ #   a) We carry a full copy of the recovery image - no patching needed
+ #      (BOARD_USES_FULL_RECOVERY_IMAGE = true);
+@@ -2227,6 +2251,22 @@ ifndef BOARD_RECOVERY_MKBOOTIMG_ARGS
+   BOARD_RECOVERY_MKBOOTIMG_ARGS := $(BOARD_MKBOOTIMG_ARGS)
+ endif
+ 
++orangefox_recovery_staging_deps :=
++ifneq ($(NOT_ORANGEFOX),1)
++orangefox_recovery_staging_deps += $(FOX_VENDOR)
++orangefox_recovery_staging_deps += $(PRODUCT_OUT)/obj/ETC/file_contexts.bin_intermediates/file_contexts.concat.tmp
++ifneq ($(TW_EXCLUDE_TZDATA),true)
++orangefox_recovery_staging_deps += $(TARGET_OUT)/usr/share/zoneinfo/tzdata
++endif
++orangefox_recovery_staging_deps += $(wildcard bootable/recovery/gui/theme/common/fonts/*)
++orangefox_recovery_staging_deps += $(wildcard bootable/recovery/gui/theme/common/languages/*)
++orangefox_recovery_staging_deps += $(wildcard bootable/recovery/gui/theme/common/*.xml)
++orangefox_recovery_staging_deps += $(shell find bootable/recovery/gui/theme/$(TW_THEME) -type f 2>/dev/null)
++ifeq ($(TW_EXTRA_LANGUAGES),true)
++orangefox_recovery_staging_deps += $(shell find bootable/recovery/gui/theme/extra-languages -type f 2>/dev/null)
++endif
++endif
++
+ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	    $(INTERNAL_ROOT_FILES) \
+ 	    $(INSTALLED_RAMDISK_TARGET) \
+@@ -2236,7 +2276,8 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	    $(INSTALLED_RECOVERY_BUILD_PROP_TARGET) \
+ 	    $(INSTALLED_RECOVERY_RAMDISK_BUILD_PROP_TARGET) \
+ 	    $(recovery_resource_deps) $(recovery_root_deps) \
+-	    $(recovery_fstab)
++	    $(recovery_fstab) \
++	    $(orangefox_recovery_staging_deps)
+ 	# Making recovery image
+ 	mkdir -p $(TARGET_RECOVERY_OUT)
+ 	mkdir -p $(TARGET_RECOVERY_ROOT_OUT)/sdcard $(TARGET_RECOVERY_ROOT_OUT)/tmp
+@@ -2244,6 +2285,32 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	# Use rsync because "cp -Rf" fails to overwrite broken symlinks on Mac.
+ 	rsync -a --exclude=sdcard $(IGNORE_RECOVERY_SEPOLICY) $(IGNORE_CACHE_LINK) $(TARGET_ROOT_OUT) $(TARGET_RECOVERY_OUT)
+ 	# Modifying ramdisk contents...
++
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_Before_Recovery_Image" \
++	FOX_MANIFEST_VER="12.1" \
++	FOX_DISABLE_UPDATEZIP="$(FOX_DISABLE_UPDATEZIP)" \
++	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++	RECOVERY_RAMDISK_COMPRESSOR="$(RECOVERY_RAMDISK_COMPRESSOR)" \
++	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++	BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=$(BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT) \
++	BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT=$(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT) \
++	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++
+ 	$(if $(filter true,$(BOARD_BUILD_SYSTEM_ROOT_IMAGE)),, \
+ 	  ln -sf /system/bin/init $(TARGET_RECOVERY_ROOT_OUT)/init)
+ 	# Removes $(TARGET_RECOVERY_ROOT_OUT)/init*.rc EXCEPT init.recovery*.rc.
+@@ -2261,11 +2328,16 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	  cp -rf $(item) $(TARGET_RECOVERY_ROOT_OUT)/$(newline))
+ 	$(foreach item,$(recovery_fstab), \
+ 	  cp -f $(item) $(TARGET_RECOVERY_ROOT_OUT)/system/etc/recovery.fstab)
++	cp -f $(PRODUCT_OUT)/obj/ETC/file_contexts.bin_intermediates/file_contexts.concat.tmp $(TARGET_RECOVERY_ROOT_OUT)/file_contexts
++ifneq ($(TW_EXCLUDE_TZDATA),true)
++	mkdir -p $(TARGET_RECOVERY_ROOT_OUT)/system/usr/share/zoneinfo
++	cp -f $(TARGET_OUT)/usr/share/zoneinfo/tzdata $(TARGET_RECOVERY_ROOT_OUT)/system/usr/share/zoneinfo/tzdata
++endif
+ 	$(if $(strip $(recovery_wipe)), \
+ 	  cp -f $(recovery_wipe) $(TARGET_RECOVERY_ROOT_OUT)/system/etc/recovery.wipe)
+ 	ln -sf prop.default $(TARGET_RECOVERY_ROOT_OUT)/default.prop
+-	cd $(TARGET_RECOVERY_ROOT_OUT) && touch ramdisk-files.txt && touch ramdisk-files.sha256sum && find . | sed "s/.\///" | sed "/lib\/modules\//d" > ramdisk-files.txt
+-	cd $(TARGET_RECOVERY_ROOT_OUT) && find -type f | sed "s/.\/ramdisk-files.sha256sum//" | sed "/lib\/modules/d" | sed "/prop.default/d" | xargs sha256sum > ramdisk-files.sha256sum
++	cd $(TARGET_RECOVERY_ROOT_OUT) && touch ramdisk-files.txt && touch ramdisk-files.sha256sum && find . | sed "s/.\///" > ramdisk-files.txt
++	cd $(TARGET_RECOVERY_ROOT_OUT) && find -type f | sed "s/.\/ramdisk-files.sha256sum//" | sed "/prop.default/d" | xargs sha256sum > ramdisk-files.sha256sum
+ 	$(BOARD_RECOVERY_IMAGE_PREPARE)
+ 	$(hide) touch $@
+ 
+@@ -2338,6 +2410,31 @@ $(foreach b,$(INSTALLED_BOOTIMAGE_TARGET), $(eval $(call add-dependency,$(b),$(c
+ $(INSTALLED_BOOTIMAGE_TARGET): $(recoveryimage-deps)
+ 	$(call pretty,"Target boot image from recovery: $@")
+ 	$(call build-recoveryimage-target, $@, $(PRODUCT_OUT)/$(subst .img,,$(subst boot,kernel,$(notdir $@))))
++
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++	FOX_MANIFEST_VER="12.1" \
++	FOX_DISABLE_UPDATEZIP="$(FOX_DISABLE_UPDATEZIP)" \
++	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++	RECOVERY_RAMDISK_COMPRESSOR="$(RECOVERY_RAMDISK_COMPRESSOR)" \
++	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++
+ endif # BOARD_USES_RECOVERY_AS_BOOT
+ 
+ ifndef BOARD_CUSTOM_BOOTIMG_MK
+@@ -2368,6 +2465,32 @@ endif # BUILDING_RECOVERY_IMAGE
+ .PHONY: recoveryimage
+ recoveryimage: $(INSTALLED_RECOVERYIMAGE_TARGET) $(RECOVERY_RESOURCE_ZIP)
+ 
++ifneq ($(NOT_ORANGEFOX),1)
++ifneq ($(BOARD_USES_RECOVERY_AS_BOOT),true)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++	FOX_MANIFEST_VER="12.1" \
++	FOX_DISABLE_UPDATEZIP="$(FOX_DISABLE_UPDATEZIP)" \
++	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++	RECOVERY_RAMDISK_COMPRESSOR="$(RECOVERY_RAMDISK_COMPRESSOR)" \
++	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++endif
++
+ ifneq ($(BOARD_NAND_PAGE_SIZE),)
+ $(error MTD device is no longer supported and thus BOARD_NAND_PAGE_SIZE is deprecated.)
+ endif
+@@ -2447,7 +2570,6 @@ endif # BUILDING_DEBUG_BOOT_IMAGE || BUILDING_DEBUG_VENDOR_BOOT_IMAGE
+ 
+ # -----------------------------------------------------------------
+ # the boot-debug.img, which is the kernel plus ramdisk-debug.img
+-#
+ # Note: it's intentional to skip signing for boot-debug.img, because it
+ # can only be used if the device is unlocked with verification error.
+ ifdef BUILDING_DEBUG_BOOT_IMAGE
+@@ -2647,7 +2769,6 @@ endif # BUILDING_DEBUG_BOOT_IMAGE || BUILDING_DEBUG_VENDOR_BOOT_IMAGE
+ 
+ # -----------------------------------------------------------------
+ # the boot-test-harness.img, which is the kernel plus ramdisk-test-harness.img
+-#
+ # Note: it's intentional to skip signing for boot-test-harness.img, because it
+ # can only be used if the device is unlocked with verification error.
+ ifdef BUILDING_DEBUG_BOOT_IMAGE
+@@ -3116,7 +3237,6 @@ endif
+ 
+ # Create symlinks for vendor_dlkm on devices with a vendor_dlkm partition:
+ # /vendor/lib/modules -> /vendor_dlkm/lib/modules
+-#
+ # On devices with a vendor_dlkm partition,
+ # - /vendor/lib/modules is a symlink to a directory that stores vendor DLKMs.
+ # - /vendor_dlkm/{etc,...} store other vendor_dlkm files directly. The vendor_dlkm partition is
+@@ -3290,7 +3410,6 @@ INTERNAL_ODMIMAGE_FILES := \
+ 
+ # Create symlinks for odm_dlkm on devices with a odm_dlkm partition:
+ # /odm/lib/modules -> /odm_dlkm/lib/modules
+-#
+ # On devices with a odm_dlkm partition,
+ # - /odm/lib/modules is a symlink to a directory that stores odm DLKMs.
+ # - /odm_dlkm/{etc,...} store other odm_dlkm files directly. The odm_dlkm partition is
+@@ -4722,7 +4841,6 @@ droidcore-unbundled: $(INSTALLED_MISC_INFO_TARGET)
+ # A zip of the directories that map to the target filesystem.
+ # This zip can be used to create an OTA package or filesystem image
+ # as a post-build step.
+-#
+ name := $(TARGET_PRODUCT)
+ ifeq ($(TARGET_BUILD_TYPE),debug)
+   name := $(name)_debug
+@@ -5515,7 +5633,6 @@ endif
+ # -----------------------------------------------------------------
+ # A zip of the symbols directory.  Keep the full paths to make it
+ # more obvious where these files came from.
+-#
+ name := $(TARGET_PRODUCT)
+ ifeq ($(TARGET_BUILD_TYPE),debug)
+   name := $(name)_debug
+@@ -5536,7 +5653,6 @@ $(SYMBOLS_ZIP): $(SOONG_ZIP)
+ 	$(hide) $(SOONG_ZIP) --ignore_missing_files -d -o $@ -C $(OUT_DIR)/.. -l $(PRIVATE_LIST_FILE)
+ # -----------------------------------------------------------------
+ # A zip of the coverage directory.
+-#
+ name := gcov-report-files-all
+ ifeq ($(TARGET_BUILD_TYPE),debug)
+ name := $(name)_debug
+@@ -5555,7 +5671,6 @@ $(COVERAGE_ZIP): $(SOONG_ZIP)
+ 
+ #------------------------------------------------------------------
+ # Export the LLVM profile data tool and dependencies for Clang coverage processing
+-#
+ ifeq (true,$(CLANG_COVERAGE))
+   LLVM_PROFDATA := $(LLVM_PREBUILTS_BASE)/linux-x86/$(LLVM_PREBUILTS_VERSION)/bin/llvm-profdata
+   LIBCXX := $(LLVM_PREBUILTS_BASE)/linux-x86/$(LLVM_PREBUILTS_VERSION)/lib64/libc++.so.1
+@@ -5569,7 +5684,6 @@ endif
+ # -----------------------------------------------------------------
+ # A zip of the Android Apps. Not keeping full path so that we don't
+ # include product names when distributing
+-#
+ name := $(TARGET_PRODUCT)
+ ifeq ($(TARGET_BUILD_TYPE),debug)
+   name := $(name)_debug
+@@ -5618,7 +5732,6 @@ endif # EMMA_INSTRUMENT=true
+ 
+ #------------------------------------------------------------------
+ # A zip of Proguard obfuscation dictionary files.
+-#
+ PROGUARD_DICT_ZIP := $(PRODUCT_OUT)/$(TARGET_PRODUCT)-proguard-dict-$(FILE_NAME_TAG).zip
+ # For apps_only build we'll establish the dependency later in build/make/core/main.mk.
+ ifeq (,$(TARGET_BUILD_UNBUNDLED))
+@@ -5632,7 +5745,6 @@ $(PROGUARD_DICT_ZIP): $(SOONG_ZIP)
+ 
+ #------------------------------------------------------------------
+ # A zip of Proguard usage files.
+-#
+ PROGUARD_USAGE_ZIP := $(PRODUCT_OUT)/$(TARGET_PRODUCT)-proguard-usage-$(FILE_NAME_TAG).zip
+ # For apps_only build we'll establish the dependency later in build/make/core/main.mk.
+ ifeq (,$(TARGET_BUILD_UNBUNDLED))
+@@ -5940,11 +6052,9 @@ endif
+ sdk_dir := $(HOST_OUT)/sdk/$(TARGET_PRODUCT)
+ 
+ # Build a name that looks like:
+-#
+ #     linux-x86   --> android-sdk_12345_linux-x86
+ #     darwin-x86  --> android-sdk_12345_mac-x86
+ #     windows-x86 --> android-sdk_12345_windows
+-#
+ sdk_name := android-sdk_$(FILE_NAME_TAG)
+ ifeq ($(HOST_OS),darwin)
+   INTERNAL_SDK_HOST_OS_NAME := mac
+@@ -6023,7 +6133,6 @@ $(INTERNAL_SDK_TARGET): PRIVATE_DEP_FILE := $(sdk_dep_file)
+ $(INTERNAL_SDK_TARGET): PRIVATE_INPUT_FILES := $(sdk_atree_files)
+ 
+ # Set SDK_GNU_ERROR to non-empty to fail when a GNU target is built.
+-#
+ #SDK_GNU_ERROR := true
+ 
+ $(INTERNAL_SDK_TARGET): $(deps)
+diff --git a/core/config.mk b/core/config.mk
+index 2b0ae12..56c1605 100644
+--- a/core/config.mk
++++ b/core/config.mk
+@@ -324,13 +324,11 @@ include vendor/twrp/config/BoardConfigTWRP.mk
+ #       device being built. It is set as $(TARGET_DEVICE_DIR)/kernel-headers,
+ #       e.g. device/samsung/tuna/kernel-headers. This directory is not
+ #       explicitly set by anyone, the build system always adds this subdir.
+-#
+ #   TARGET_BOARD_KERNEL_HEADERS is specified by the BoardConfig.mk file
+ #       to allow other directories to be included. This is useful if there's
+ #       some common place where a few headers are being kept for a group
+ #       of devices. For example, device/<vendor>/common/kernel-headers could
+ #       contain some headers for several of <vendor>'s devices.
+-#
+ #   TARGET_PRODUCT_KERNEL_HEADERS is generated by the product inheritance
+ #       graph. This allows architecture products to provide headers for the
+ #       devices using that architecture. For example,
+@@ -340,13 +338,11 @@ include vendor/twrp/config/BoardConfigTWRP.mk
+ #       The build system then combines all the values specified by all the
+ #       PRODUCT_VENDOR_KERNEL_HEADERS directives in the product inheritance
+ #       tree and then exports a TARGET_PRODUCT_KERNEL_HEADERS variable.
+-#
+ # The layout of subdirs in any of the kernel-headers dir should mirror the
+ # layout of the kernel include/ directory. For example,
+ #     device/samsung/tuna/kernel-headers/linux/,
+ #     hardware/ti/omap4xxx/kernel-headers/media/,
+ #     etc.
+-#
+ # NOTE: These directories MUST contain post-processed headers using the
+ # bionic/libc/kernel/tools/clean_header.py tool. Additionally, the original
+ # kernel headers must also be checked in, but in a different subdirectory. By
+@@ -354,7 +350,6 @@ include vendor/twrp/config/BoardConfigTWRP.mk
+ # directory of the same parent dir. For example,
+ #     device/samsung/tuna/kernel-headers            <----- post-processed
+ #     device/samsung/tuna/original-kernel-headers   <----- originals
+-#
+ TARGET_DEVICE_KERNEL_HEADERS := $(strip $(wildcard $(TARGET_DEVICE_DIR)/kernel-headers))
+ 
+ define validate-kernel-headers
+@@ -482,9 +477,7 @@ USE_PREBUILT_SDK_TOOLS_IN_PLACE := true
+ USE_D8 := true
+ .KATI_READONLY := USE_D8
+ 
+-#
+ # Tools that are prebuilts for TARGET_BUILD_USE_PREBUILT_SDKS
+-#
+ ifeq (,$(TARGET_BUILD_USE_PREBUILT_SDKS))
+   AAPT := $(HOST_OUT_EXECUTABLES)/aapt
+   MAINDEXCLASSES := $(HOST_OUT_EXECUTABLES)/mainDexClasses
+@@ -606,6 +599,15 @@ EXTRACT_KERNEL := build/make/tools/extract_kernel.py
+ # Path to tools.jar
+ HOST_JDK_TOOLS_JAR := $(ANDROID_JAVA8_HOME)/lib/tools.jar
+ 
++FOX_CURRENT_DEV_STR := $(shell git -C bootable/recovery log -1 --format='%ad (%h)' --date=short)
++ifdef NOT_ORANGEFOX
++  FOX_VENDOR :=
++  BASH :=
++else
++  FOX_VENDOR := vendor/recovery/OrangeFox_A12.sh
++  BASH := bash
++endif
++
+ APICHECK_COMMAND := $(JAVA) -Xmx4g -jar $(APICHECK) --no-banner --compatible-output=no
+ 
+ # Boolean variable determining if the allow list for compatible properties is enabled
+@@ -1070,7 +1072,6 @@ resolve-prebuilt-sdk-aidl-path = $(call get-prebuilt-sdk-dir,$(call get-sdk-vers
+ 
+ # Historical SDK version N is stored in $(HISTORICAL_SDK_VERSIONS_ROOT)/N.
+ # The 'current' version is whatever this source tree is.
+-#
+ # sgrax     is the opposite of xargs.  It takes the list of args and puts them
+ #           on each line for sort to process.
+ # sort -g   is a numeric sort, so 1 2 3 10 instead of 1 10 2 3.
+diff --git a/envsetup.sh b/envsetup.sh
+index 2a9d64a..69d3c0d 100644
+--- a/envsetup.sh
++++ b/envsetup.sh
+@@ -353,6 +353,12 @@ function printconfig()
+         return
+     fi
+     get_build_var report_config
++
++    if [ "$NOT_ORANGEFOX" != "1" ]; then
++	local DEVICE=$(cut -d'_' -f2 <<<$TARGET_PRODUCT)
++	mkdir -p /tmp/$DEVICE
++	export > /tmp/$DEVICE/fox_env.sh
++    fi
+ }
+ 
+ function set_stuff_for_environment()
+@@ -479,12 +485,10 @@ function choosetype()
+     destroy_build_var_cache
+ }
+ 
+-#
+ # This function isn't really right:  It chooses a TARGET_PRODUCT
+ # based on the list of boards.  Usually, that gets you something
+ # that kinda works with a generic product, but really, you should
+ # pick a product by name.
+-#
+ function chooseproduct()
+ {
+     local default_value
+@@ -966,7 +970,6 @@ function qpid() {
+ }
+ 
+ # syswrite - disable verity, reboot if needed, and remount image
+-#
+ # Easy way to make system.img/etc writable
+ function syswrite() {
+   adb wait-for-device && adb root || return 1
+@@ -979,7 +982,6 @@ function syswrite() {
+ 
+ # coredump_setup - enable core dumps globally for any process
+ #                  that has the core-file-size limit set correctly
+-#
+ # NOTE: You must call also coredump_enable for a specific process
+ #       if its core-file-size limit is not set already.
+ # NOTE: Core dumps are written to ramdisk; they will not survive a reboot!
+@@ -1009,7 +1011,6 @@ function coredump_setup()
+ 
+ # coredump_enable - enable core dumps for the specified process
+ # $1 = PID of process (e.g., $(pid mediaserver))
+-#
+ # NOTE: coredump_setup must have been called as well for a core
+ #       dump to actually be generated.
+ 
+@@ -1026,7 +1027,6 @@ function coredump_enable()
+ 
+ # core - send SIGV and pull the core for process
+ # $1 = PID of process (e.g., $(pid mediaserver))
+-#
+ # NOTE: coredump_setup must be called once per boot for core dumps to be
+ #       enabled globally.
+ 
+@@ -1800,7 +1800,6 @@ function validate_current_shell() {
+ # Execute the contents of any vendorsetup.sh files we can find.
+ # Unless we find an allowed-vendorsetup_sh-files file, in which case we'll only
+ # load those.
+-#
+ # This allows loading only approved vendorsetup.sh files
+ function source_vendorsetup() {
+     unset VENDOR_PYTHONPATH
+@@ -1873,3 +1872,38 @@ addcompletions
+ export ANDROID_BUILD_TOP=$(gettop)
+ 
+ . $ANDROID_BUILD_TOP/vendor/twrp/build/envsetup.sh
++
++function orangefox_envsetup() {
++
++    export FOX_MANIFEST_ROOT=$(gettop)
++
++    if [ -z "$NOT_ORANGEFOX" ]; then
++       if [ ! -f $FOX_MANIFEST_ROOT/bootable/recovery/orangefox_defaults.go -a ! -f $FOX_MANIFEST_ROOT/bootable/recovery/orangefox.mk ]; then
++	  export NOT_ORANGEFOX=1
++       fi
++    fi
++
++    if [ "$NOT_ORANGEFOX" = "1" ]; then
++        echo "- Not OrangeFox! ..."
++        return
++    fi
++
++    unset NOT_ORANGEFOX
++    export ALLOW_MISSING_DEPENDENCIES=true
++
++    if [ -z "$OUT_DIR" ]; then
++       if [ -n "$OUT" ]; then
++          export OUT_DIR="$OUT"
++       else
++          export OUT_DIR="$FOX_MANIFEST_ROOT/out"
++          export OUT="$OUT_DIR"
++       fi
++    else
++	if [ -z "$OUT" ]; then
++	   export OUT="$OUT_DIR"
++	fi
++    fi
++   [ -s $FOX_MANIFEST_ROOT/frameworks/base/services/core/xsd/vts/Android.mk ] && echo -n "" > $FOX_MANIFEST_ROOT/frameworks/base/services/core/xsd/vts/Android.mk
++}
++
++orangefox_envsetup

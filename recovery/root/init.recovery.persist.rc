@@ -1,0 +1,3 @@
+on fs
+    mkdir /persist 0755 root system
+    mount none /mnt/vendor/persist /persist bind

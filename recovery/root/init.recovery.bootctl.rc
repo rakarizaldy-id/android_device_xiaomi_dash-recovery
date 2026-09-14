@@ -1,5 +1,3 @@
-# DASH stock MTK recovery boot-control HAL with recovery userspace compat.
-# Keep one service definition only; binary remains stock DASH PLATFORM authority.
 service vendor.boot-default /system/bin/hw/android.hardware.boot-service.mtk_recovery
     class early_hal
     user root

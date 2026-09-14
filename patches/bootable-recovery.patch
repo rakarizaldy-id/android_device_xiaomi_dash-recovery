@@ -1,0 +1,1745 @@
+diff --git a/Android.mk b/Android.mk
+index d35090d9..9a57491a 100755
+--- a/Android.mk
++++ b/Android.mk
+@@ -319,6 +319,9 @@ ifneq ($(TW_LOAD_VENDOR_MODULES),)
+     LOCAL_C_INCLUDES += system/core/libmodprobe/include
+     LOCAL_STATIC_LIBRARIES += libmodprobe
+     LOCAL_CFLAGS += -DTW_LOAD_VENDOR_MODULES=$(TW_LOAD_VENDOR_MODULES)
++    ifeq ($(TW_LOAD_VENDOR_MODULES_KEEP_ODM),true)
++        LOCAL_CFLAGS += -DTW_LOAD_VENDOR_MODULES_KEEP_ODM
++    endif
+     ifeq ($(TW_LOAD_VENDOR_MODULES_EXCLUDE_GKI),true)
+         LOCAL_CFLAGS += -DTW_LOAD_VENDOR_MODULES_EXCLUDE_GKI
+     endif
+@@ -326,6 +329,12 @@ ifneq ($(TW_LOAD_VENDOR_MODULES),)
+         LOCAL_CFLAGS += -DTW_LOAD_VENDOR_BOOT_MODULES
+     endif
+ endif
++ifeq ($(TW_PREDECRYPT_INIT_SYNC),true)
++    LOCAL_CFLAGS += -DTW_PREDECRYPT_INIT_SYNC
++endif
++ifeq ($(TW_DEFER_DATA_DECRYPT),true)
++    LOCAL_CFLAGS += -DTW_DEFER_DATA_DECRYPT
++endif
+ ifeq ($(TW_INCLUDE_PYTHON),true)
+     ifeq ($(wildcard external/python3/Android.mk),)
+         $(warning Python3 repo not found! You need to clone the repo.)
+@@ -345,7 +354,7 @@ ifeq ($(TW_INCLUDE_CRYPTO), true)
+         android.hardware.oemlock@1.0 libf2fs_sparseblock libbinder libbinder_ndk \
+         libandroidicu.recovery \
+         android.hardware.gatekeeper@1.0 \
+-        android.hardware.weaver@1.0 \
++        android.hardware.weaver-V1-ndk_platform \
+         android.frameworks.stats@1.0 \
+         android.security.maintenance-ndk_platform \
+         android.system.keystore2-V1-ndk_platform \
+diff --git a/etc/Android.mk b/etc/Android.mk
+index 2387b906..5cdf7fbc 100755
+--- a/etc/Android.mk
++++ b/etc/Android.mk
+@@ -92,7 +92,11 @@ ifneq ($(filter $(AB_OTA_UPDATER) $(PRODUCT_USE_DYNAMIC_PARTITIONS) $(TW_INCLUDE
+ 	LOCAL_MODULE_CLASS := EXECUTABLES
+ 	LOCAL_MODULE_PATH := $(TARGET_RECOVERY_ROOT_OUT)/system/etc/init
+ 
+-	LOCAL_SRC_FILES := init/$(LOCAL_MODULE)
++	ifeq ($(TW_PREDECRYPT_INIT_SYNC),true)
++		LOCAL_SRC_FILES := init/keystore2.predecrypt.rc
++	else
++		LOCAL_SRC_FILES := init/$(LOCAL_MODULE)
++	endif
+ 	include $(BUILD_PREBUILT)
+ 
+ 	include $(CLEAR_VARS)
+diff --git a/etc/init/servicemanager.rc b/etc/init/servicemanager.rc
+index 40ed84d8..5f3cb695 100644
+--- a/etc/init/servicemanager.rc
++++ b/etc/init/servicemanager.rc
+@@ -5,4 +5,5 @@ service servicemanager /system/bin/servicemanager
+     user root
+     group root readproc
+     disabled
++    onrestart setprop servicemanager.ready false
+     seclabel u:r:recovery:s0
+diff --git a/gui/action.cpp b/gui/action.cpp
+index 293dd164..7960f468 100755
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -25,6 +25,7 @@
+ #include <string.h>
+ #include <fcntl.h>
+ #include <sys/stat.h>
++#include <sys/statvfs.h>
+ #include <sys/time.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
+@@ -793,6 +794,12 @@ int GUIAction::check_and_reload(std::string arg __unused)
+     }
+   }
+   
++  TWFunc::Fox_Property_Set("of_decryption_failed", "false");
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++  TWFunc::RunFoxScript("/system/bin/dash-settings-migrate.sh", "postdecrypt");
++#endif
++  DataManager::ReadSettingsFile();
++
+   if (TWFunc::Path_Exists(FOX_THEME_PATH) || TWFunc::Path_Exists(FOX_NAVBAR_PATH)) {
+     PageManager::RequestReload();
+     gui_changePage("reapply_settings");
+@@ -1393,7 +1400,9 @@ int GUIAction::screenshotImpl(std::string arg __unused)
+ 	// Screenshot_2014-01-01-18-21-38.png
+ 	strftime(path+path_len, sizeof(path)-path_len, "Screenshot_%Y-%m-%d-%H-%M-%S.png", localtime(&tm));
+ 
++	LOGINFO("DASH screenshot: capture -> %s (fb=%dx%d)\n", path, gr_fb_width(), gr_fb_height());
+ 	int res = gr_save_screenshot(path);
++	LOGINFO("DASH screenshot: result=%d path=%s\n", res, path);
+ 	if (res == 0) {
+ 		chmod(path, 0666);
+ 		chown(path, uid, gid);
+@@ -2695,7 +2704,20 @@ int GUIAction::wlfw(std::string arg __unused)
+     }
+   else
+     {
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++      const std::string stage_root = "/tmp/orangefox/ramdisk";
++      const std::string stage = stage_root + "/twres";
++      if (TWFunc::Path_Exists(stage_root))
++        TWFunc::removeDir(stage_root, false);
++      if (!TWFunc::Create_Dir_Recursive(stage + "/images/Splash", 0755, 0, 0)) {
++        LOGERR("DASH splash: unable to prepare persist-backed staging\n");
++        operation_end(1);
++        return 1;
++      }
++      LOGINFO("DASH splash: prepared persist-backed staging at %s\n", stage.c_str());
++#else
+       TWFunc::Unpack_Image("/recovery");
++#endif
+     }
+   operation_end(0);
+   return 0;
+@@ -2704,6 +2726,7 @@ int GUIAction::wlfw(std::string arg __unused)
+ int GUIAction::wlfx(std::string arg __unused)
+ {
+   operation_start("WLFX");
++  int op_status = 0;
+   if (simulate)
+     {
+       simulate_progress_bar();
+@@ -2711,10 +2734,64 @@ int GUIAction::wlfx(std::string arg __unused)
+   else
+     {
+       DataManager::Flush();
+-      TWFunc::Repack_Image("/recovery");
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++      const std::string stage = "/tmp/orangefox/ramdisk/twres";
++      const std::string persist_splash = Fox_Settings_Path + "/.splash";
++      std::string splash_xml;
++      if (TWFunc::read_file(stage + "/splash.xml", splash_xml) == 0) {
++        if (splash_xml.find("SED Splash") == std::string::npos) {
++          if (TWFunc::Path_Exists(persist_splash) && TWFunc::removeDir(persist_splash, false) != 0) {
++            LOGERR("DASH splash: failed to remove persisted override\n");
++            op_status = 1;
++          } else {
++            sync();
++            LOGINFO("DASH splash: reverted to built-in splash; removed persisted override\n");
++          }
++        } else if (!TWFunc::Create_Dir_Recursive(persist_splash, 0755, AID_MEDIA_RW, AID_MEDIA_RW)) {
++          LOGERR("DASH splash: failed to create %s\n", persist_splash.c_str());
++          op_status = 1;
++        } else {
++          const std::string stage_png = stage + "/images/Splash/user.png";
++          constexpr unsigned long long kDashSplashMaxBytes = 12ULL * 1024ULL * 1024ULL;
++          constexpr unsigned long long kDashPersistReserveBytes = 4ULL * 1024ULL * 1024ULL;
++          const unsigned long long png_size = TWFunc::Get_File_Size(stage_png);
++          struct statvfs persist_fs {};
++          unsigned long long persist_free = 0;
++          if (png_size > kDashSplashMaxBytes) {
++            LOGERR("DASH splash: user.png too large (%llu bytes; max=%llu)\n", png_size, kDashSplashMaxBytes);
++            op_status = 1;
++          } else if (statvfs(Fox_Settings_Path.c_str(), &persist_fs) == 0 &&
++                     (persist_free = static_cast<unsigned long long>(persist_fs.f_bavail) * persist_fs.f_frsize) <
++                       png_size + kDashPersistReserveBytes) {
++            LOGERR("DASH splash: refusing persist write; free=%llu need=%llu reserve=%llu\n",
++                   persist_free, png_size, kDashPersistReserveBytes);
++            op_status = 1;
++          } else {
++            int xml_res = TWFunc::copy_file(stage + "/splash.xml", persist_splash + "/splash.xml", 0644, false);
++            int png_res = TWFunc::copy_file(stage_png, persist_splash + "/user.png", 0644, false);
++            if (xml_res == 0 && png_res == 0) {
++            TWFunc::set_media_rw_permissions(persist_splash);
++            TWFunc::set_media_rw_permissions(persist_splash + "/splash.xml");
++            TWFunc::set_media_rw_permissions(persist_splash + "/user.png");
++            sync();
++            LOGINFO("DASH splash: persisted override under %s\n", persist_splash.c_str());
++            } else {
++              LOGERR("DASH splash: failed to persist generated splash (xml=%d png=%d)\n", xml_res, png_res);
++              op_status = 1;
++            }
++          }
++        }
++      } else {
++        LOGERR("DASH splash: generated splash.xml missing; refusing false-success persistence\n");
++        op_status = 1;
++      }
++#else
++      if (!TWFunc::Repack_Image("/recovery"))
++        op_status = 1;
++#endif
+     }
+-  operation_end(0);
+-  return 0;
++  operation_end(op_status);
++  return op_status;
+ }
+ 
+ int GUIAction::adb(std::string arg)
+diff --git a/gui/gui.cpp b/gui/gui.cpp
+index 1f13ee2f..7bee1745 100644
+--- a/gui/gui.cpp
++++ b/gui/gui.cpp
+@@ -408,6 +408,16 @@ void InputHandler::process_EV_KEY(input_event& ev)
+ 		}
+ #endif
+ 		if (kb->KeyDown(ev.code) >= 0) {
++			if (kb->AreKeysPressed(KEY_VOLUMEDOWN, KEY_POWER)) {
++				LOGEVENT("DASH screenshot chord detected on key-down\n");
++				GUIAction::screenshotImpl("");
++				DataManager::Vibrate("tw_button_vibrate");
++				g_suppress_power_toggle_until_ms = nowMs() + 1000;
++				key_status = KS_KEY_REPEAT;
++				touch_status = TS_NONE;
++				gettimeofday(&touchStart, NULL);
++				return;
++			}
+ 			// Key repeat is enabled for this key
+ 			key_status = KS_KEY_PRESSED;
+ 			touch_status = TS_NONE;
+@@ -890,6 +900,27 @@ extern "C" int gui_init(void)
+         blankTimer.resetTimerAndUnblank();
+ #endif
+ 
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	const std::string dash_splash_dir = Fox_Settings_Path + "/.splash";
++	const std::string dash_splash_xml = dash_splash_dir + "/splash.xml";
++	const std::string dash_splash_png = dash_splash_dir + "/user.png";
++	if (PartitionManager.Mount_Settings_Storage(false) && TWFunc::Path_Exists(dash_splash_xml)) {
++		constexpr unsigned long kDashSplashMaxBytes = 12UL * 1024UL * 1024UL;
++		if (TWFunc::Path_Exists(dash_splash_png) && TWFunc::Get_File_Size(dash_splash_png) > kDashSplashMaxBytes) {
++			LOGERR("DASH splash: persisted user.png exceeds safety limit; ignoring override\n");
++		} else {
++		int xml_res = TWFunc::copy_file(dash_splash_xml, TWRES "splash.xml", 0644, false);
++		int png_res = 0;
++		if (TWFunc::Path_Exists(dash_splash_png))
++			png_res = TWFunc::copy_file(dash_splash_png, TWRES "images/Splash/user.png", 0644, false);
++		if (xml_res == 0 && png_res == 0)
++			LOGINFO("DASH splash: restored persisted override from %s\n", dash_splash_dir.c_str());
++		else
++			LOGERR("DASH splash: persisted override restore failed (xml=%d png=%d)\n", xml_res, png_res);
++		}
++	}
++#endif
++
+ 	// load and show splash screen
+ 	if (PageManager::LoadPackage("splash", TWRES "splash.xml", "splash")) {
+ 		LOGERR("Failed to load splash screen XML.\n");
+@@ -916,8 +947,12 @@ extern "C" int gui_loadResources(void)
+ 
+ #ifdef FOX_ALLOW_EARLY_SETTINGS_LOAD
+ #ifdef FOX_SETTINGS_ROOT_DIRECTORY
+-	if (PartitionManager.Mount_Settings_Storage(false))
++	if (PartitionManager.Mount_Settings_Storage(false)) {
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++		TWFunc::RunFoxScript("/system/bin/dash-settings-migrate.sh", "predecrypt");
++#endif
+ 		DataManager::ReadSettingsFile();
++	}
+ #else
+ 	DataManager::LoadPersistValues();
+ #endif
+@@ -956,7 +991,11 @@ extern "C" int gui_loadResources(void)
+ 			}
+ 		}
+ 
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++		theme_path = DataManager::GetCurrentStoragePath() + "/theme/ui.zip";
++#else
+ 		theme_path = DataManager::GetSettingsStoragePath() + "/theme/ui.zip";
++#endif
+ 		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
+ 		{
+ #endif // ifndef TW_OEM_BUILD
+@@ -978,6 +1017,13 @@ extern "C" int gui_loadResources(void)
+ 	// Read the settings again to overwrite gui default settings that were loaded by PageManager::LoadPackage
+ 	if (PartitionManager.Mount_Settings_Storage(false))
+ 		DataManager::ReadSettingsFile();
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	if (DataManager::GetIntValue("cutout_clock") > 0 && DataManager::GetIntValue("center_clock") == 1) {
++		DataManager::SetValue("center_clock", 2);
++		DataManager::Flush();
++		LOGINFO("DASH statusbar: migrated stale center clock to left for cutout safety\n");
++	}
++#endif
+ #else
+ 	DataManager::LoadPersistValues();
+ #endif
+@@ -1001,8 +1047,12 @@ extern "C" int gui_loadCustomResources(void)
+ 		return -1;
+ 	}
+ 
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	std::string theme_path = DataManager::GetCurrentStoragePath() + "/Fox/.bin./xd.zip";
++#else
+ 	std::string theme_path = DataManager::GetSettingsStoragePath();
+ 	theme_path += "/Fox/.bin./xd.zip";
++#endif
+ 	// Check for a custom theme
+ 	if (TWFunc::Path_Exists(theme_path)) 
+ 	{
+diff --git a/gui/libguitwrp_defaults.go b/gui/libguitwrp_defaults.go
+index 92b16321..1b585a3e 100644
+--- a/gui/libguitwrp_defaults.go
++++ b/gui/libguitwrp_defaults.go
+@@ -7,6 +7,7 @@ import (
+ 	"io/ioutil"
+ 	"os"
+ 	"path"
++	"path/filepath"
+ 	"strconv"
+ 	"strings"
+ )
+@@ -41,8 +42,24 @@ func printCustomThemeWarning(theme string, location string) {
+ }
+ 
+ func copyThemeResources(ctx android.BaseContext, dirs []string, files []string) {
++	for _, dir := range dirs {
++		matches, err := ctx.GlobWithDeps(path.Join("bootable/recovery", dir, "**/*"), nil)
++		if err != nil {
++			fmt.Printf("OrangeFox theme dependency glob failed for %s: %v\n", dir, err)
++			return
++		}
++		ctx.AddNinjaFileDeps(matches...)
++	}
++	for _, file := range files {
++		ctx.AddNinjaFileDeps(path.Join("bootable/recovery", file))
++	}
++	ctx.AddNinjaFileDeps("bootable/recovery/variables.h")
++
+ 	outDir := ctx.Config().Getenv("OUT")
+-	twRes := outDir + "/recovery/root/twres/"
++	if !filepath.IsAbs(outDir) {
++		outDir = filepath.Join(android.AbsSrcDirForExistingUseCases(), outDir)
++	}
++	twRes := filepath.Join(outDir, "recovery/root/twres") + string(os.PathSeparator)
+ 	os.MkdirAll(twRes, os.ModePerm)
+ 	recoveryDir := getRecoveryAbsDir(ctx)
+ 	theme := determineTheme(ctx)
+@@ -173,8 +190,12 @@ func copyThemeResources(ctx android.BaseContext, dirs []string, files []string)
+ }
+ 
+ func copyCustomTheme(ctx android.BaseContext, customTheme string) {
++	ctx.AddNinjaFileDeps(customTheme)
+ 	outDir := ctx.Config().Getenv("OUT")
+-	twRes := outDir + "/recovery/root/twres/"
++	if !filepath.IsAbs(outDir) {
++		outDir = filepath.Join(android.AbsSrcDirForExistingUseCases(), outDir)
++	}
++	twRes := filepath.Join(outDir, "recovery/root/twres") + string(os.PathSeparator)
+ 	os.MkdirAll(twRes, os.ModePerm)
+ 	fileDest := twRes + path.Base(customTheme)
+ 	fileToCopy := fmt.Sprintf("%s%s", getBuildAbsDir(ctx), customTheme)
+diff --git a/gui/pages.cpp b/gui/pages.cpp
+index b1825757..8274bc2b 100755
+--- a/gui/pages.cpp
++++ b/gui/pages.cpp
+@@ -962,7 +962,7 @@ int PageSet::LoadDetails(LoadingContext& ctx, xml_node<>* root)
+ 					//      I used file because DataManager not loaded user vars at this moment
+ 					//      Someone may mess up recovery using this file so just remove code when OF lab disabled
+ #ifdef OF_ENABLE_LAB
+-					if (TWFunc::read_file(Fox_Home + "/scaling", num) == 0) {
++					if (TWFunc::read_file(Fox_Settings_Path + "/scaling", num) == 0) {
+ 							LOGERR("Custom scaling: %s\n", num.c_str());
+ 							scale_w = ::atof(num.c_str());
+ 							scale_h = ::atof(num.c_str());
+@@ -1403,6 +1403,15 @@ void PageManager::LoadLanguage(string filename) {
+ 		actual_filename = TWRES "customlanguages/" + filename + ".xml";
+ 	else
+ 		actual_filename = TWRES "languages/" + filename + ".xml";
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	if (!TWFunc::Path_Exists(actual_filename) && filename == "en_US") {
++		filename = "en";
++		actual_filename = TWRES "languages/en.xml";
++		DataManager::SetValue("tw_language", "en");
++		DataManager::Flush();
++		LOGINFO("DASH language: normalized legacy en_US to en\n");
++	}
++#endif
+ 	char* xmlFile = PageManager::LoadFileToBuffer(actual_filename, NULL);
+ 	if (xmlFile == NULL)
+ 		LOGERR("Unable to load '%s'\n", actual_filename.c_str());
+@@ -1588,7 +1597,11 @@ int PageManager::RunReload() {
+ 		return 0;
+ 
+ 	mReloadTheme = false;
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	theme_path = DataManager::GetCurrentStoragePath();
++#else
+ 	theme_path = DataManager::GetSettingsStoragePath();
++#endif
+ 	if (PartitionManager.Mount_By_Path(theme_path.c_str(), 1) < 0) {
+ 		LOGERR("Unable to mount %s during gui_reload_theme function.\n", theme_path.c_str());
+ 		ret_val = 1;
+diff --git a/gui/theme/portrait_hdpi/pages/advanced.xml b/gui/theme/portrait_hdpi/pages/advanced.xml
+index 936a8874..09c4b701 100644
+--- a/gui/theme/portrait_hdpi/pages/advanced.xml
++++ b/gui/theme/portrait_hdpi/pages/advanced.xml
+@@ -90,6 +90,7 @@
+ 					<action function="page">modules_mount</action>
+ 				</listitem>
+ 				<listitem name="{@fox_modules_hdr}">
++					<condition var1="vendor_boot_recovery" op="!=" var2="1"/>
+ 					<condition var1="fileexists" var2="/FFiles/OF_reset/OF_reset.zip"/>
+ 					<icon res="addons"/>
+ 					<action function="page">fox_modules</action>
+@@ -194,7 +195,7 @@
+ 			</text>
+ 
+ 			<listbox style="group_list">
+-				<placement x="0" y="%row1_1a_y%" w="%screen_w%" h="%files_np_w%"/>
++				<placement x="0" y="%row1_1a_y%" w="%screen_w%" h="%bl_h1%"/>
+ 				<listitem name="{@part_menu_hdr}">
+ 					<icon res="hard_disk"/>
+ 					<action function="page">part_options</action>
+@@ -209,7 +210,7 @@
+ 			</text>
+ 
+ 			<listbox style="group_list">
+-				<placement x="0" y="%row2_3a_y%" w="%screen_w%" h="%files_np_w%"/>
++				<placement x="0" y="%row2_3a_y%" w="%screen_w%" h="%bl_h2%"/>
+ 				<listitem name="{@merges_snapshots}">
+ 					<icon res="build"/>
+ 					<condition var1="fox_branch" op="&gt;=" var2="11"/>
+@@ -412,40 +413,20 @@
+ 		<page name="fox_modules">
+ 			<action>
+ 				<action function="set">install_back=fox_modules</action>
+-				<action function="set">aroma_help=0</action>
+ 			</action>
+ 
+-			<!-- fox_modules_confirm located in install.xml -->
+-
+ 			<text style="caption">
+ 				<placement x="%gl_text_x%" y="%row1_1_y%"/>
+-				<text>Magisk</text>
+-			</text>
+-
+-			<listbox style="group_list">
+-				<placement x="0" y="%row1_2_y%" w="%screen_w%" h="%bl_h2%"/>
+-				<listitem name="{@module_install} Magisk %magisk_ver%">
+-					<icon res="archive"/>
+-					<action function="page">mod_magisk</action>
+-				</listitem>
+-				<listitem name="{@module_uninstall} Magisk">
+-					<icon res="archive"/>
+-					<action function="page">mod_unmagisk</action>
+-				</listitem>
+-			</listbox>
+-
+-			<text style="caption">
+-				<placement x="%gl_text_x%" y="%row3_1a_y%"/>
+-				<text>{@cust_oth}</text>
++				<text>OrangeFox</text>
+ 			</text>
+ 
+ 			<listbox style="group_list">
+-				<placement x="0" y="%row3_2a_y%" w="%screen_w%" h="%bl_h4%"/>
++				<placement x="0" y="%row1_2_y%" w="%screen_w%" h="%bl_h3%"/>
+ 				<listitem name="{@module_of_set}">
+ 					<condition var1="fileexists" var2="/FFiles/OF_backup_settings/OF_backup_settings.zip"/>
+ 					<icon res="archive"/>
+ 					<action function="queueclear"/>
+-					<action function="set">fox_m_author=DarthJabba9</action>
++					<action function="set">fox_m_author=OrangeFox/DASH</action>
+ 					<action function="set">fox_m_name={@module_of_set}</action>
+ 					<action function="set">tw_file=OF_backup_settings.zip</action>
+ 					<action function="set">tw_filename=/FFiles/OF_backup_settings/OF_backup_settings.zip</action>
+@@ -462,25 +443,11 @@
+ 					<icon res="archive"/>
+ 					<action function="page">mod_reset</action>
+ 				</listitem>
+-
+-				<listitem name="{@module_pass}">
+-					<condition var1="fileexists" var2="/FFiles/OF_DelPass/OF_DelPass.zip"/>
+-					<icon res="archive"/>
+-					<action function="page">mod_pass</action>
+-				</listitem>
+-
+-				<listitem name="{@module_remove_survival}">
+-					<condition var1="fileexists" var2="/FFiles/OF_Del_Survival/OF_Del_Survival.zip"/>
+-					<condition var1="fox_branch" op="&gt;=" var2="10"/>
+-					<icon res="archive"/>
+-					<action function="page">mod_survival</action>
+-				</listitem>
+-
+ 				<listitem name="{@remove_of_files}">
+ 					<condition var1="fileexists" var2="/FFiles/OF_DelFiles/OF_DelFiles.zip"/>
+ 					<icon res="archive"/>
+ 					<action function="queueclear"/>
+-					<action function="set">fox_m_author=DarthJabba9</action>
++					<action function="set">fox_m_author=OrangeFox/DASH</action>
+ 					<action function="set">fox_m_name={@remove_of_files}</action>
+ 					<action function="set">tw_file=OF_DelFiles.zip</action>
+ 					<action function="set">tw_filename=/FFiles/OF_DelFiles/OF_DelFiles.zip</action>
+@@ -492,118 +459,16 @@
+ 					<action function="set">tw_existpage=fox_modules_confirm</action>
+ 					<action function="page">filecheck</action>
+ 				</listitem>
+-
+-				<listitem name="{@remove_factory_reset_protection}">
+-					<condition var1="enable_frp_addon" op="==" var2="1"/>
+-					<condition var1="fileexists" var2="/FFiles/OF_DelFRP/OF_DelFRP.zip"/>
+-					<icon res="archive"/>
+-					<action function="page">mod_factory_rp</action>
+-				</listitem>
+-
+-				<listitem name="{@module_initd}">
+-					<condition var1="fox_vab_device" op="!=" var2="1"/>
+-					<condition var1="fileexists" var2="%of_initd_zip%"/>
+-					<icon res="archive"/>
+-					<action function="queueclear"/>
+-					<action function="set">fox_m_author=DarthJabba9</action>
+-					<action function="set">fox_m_name={@module_initd}</action>
+-					<action function="set">tw_file=OF_initd.zip</action>
+-					<action function="set">tw_filename=%of_initd_zip%</action>
+-					<action function="set">tw_filecheck=%tw_filename%</action>
+-					<action function="set">tw_zip_location=%fox_home_files%</action>
+-					<action function="set">fox_install_built_in_zip=1</action>
+-					<action function="queuezip"/>
+-					<action function="set">tw_notexistpage=fox_modules_confirm</action>
+-					<action function="set">tw_existpage=fox_modules_confirm</action>
+-					<action function="page">filecheck</action>
+-				</listitem>
+-				<listitem name="AromaFM">
+-					<condition var1="aroma_help" op="!=" var2="1"/>
+-					<condition var1="fileexists" var2="%aroma_fm_zip%"/>
+-					<icon res="files"/>
+-					<action function="set">aroma_help=1</action>
+-				</listitem>
+-				<listitem name="{@aroma_help}">
+-					<condition var1="aroma_help" var2="1"/>
+-					<icon res="files"/>
+-					<action function="queueclear"/>
+-					<action function="set">tw_signed_zip_verify_tmp=%tw_signed_zip_verify%</action>
+-					<action function="set">tw_signed_zip_verify=0</action>
+-					<action function="set">fox_inject_after_zip_tmp=%fox_inject_after_zip%</action>
+-					<action function="set">fox_inject_after_zip=0</action>
+-					<action function="set">tw_screen_timeout_temp=%tw_screen_timeout_secs%</action>
+-					<action function="set">tw_screen_timeout_secs=0</action>
+-					<action function="set">tw_filename=%aroma_fm_zip%</action>
+-					<action function="set">qcount_temp=1</action>
+-					<action function="set">fox_install_built_in_zip=1</action>
+-					<action function="queuezip"/>
+-					<action function="flash">aroma_busy</action>
+-				</listitem>
+ 			</listbox>
+ 
+-            <text style="caption">
+-                <condition var1="fox_vab_device" var2="1"/>
+-                <condition var1="fox_support_ksu" var2="1"/>
+-                <placement x="%gl_text_x%" y="%row7_1a_y%"/>
+-                <text>Other root: needs supported kernel</text>
+-            </text>
+-
+-            <listbox style="btn_list">
+-                <condition var1="fox_vab_device" var2="1"/>
+-                <condition var1="fox_support_ksu" var2="1"/>
+-                <placement x="0" y="%row7_2a_y%" w="%screen_w%" h="%bl_h4%"/>
+-
+-                <listitem name="{@module_install} KernelSU %ksu_ver%">
+-                    <condition var1="fileexists" var2="/FFiles/KernelSU/KernelSU_Installer.zip"/>
+-                    <icon res="archive"/>
+-                    <action function="page">mod_kernelsu</action>
+-                </listitem>
+-
+-                <listitem name="{@module_install} KernelSU Next %ksun_ver%">
+-                    <condition var1="fileexists" var2="/FFiles/KernelSU/KernelSU_Next_Installer.zip"/>
+-                    <icon res="archive"/>
+-                    <action function="page">mod_kernelsu_next</action>
+-                </listitem>
+-
+-                <listitem name="{@module_install} SukiSU Ultra %ssu_ver%">
+-                    <condition var1="fileexists" var2="/FFiles/KernelSU/KernelSU_Suki_Installer.zip"/>
+-                    <icon res="archive"/>
+-                    <action function="page">mod_sukisu</action>
+-                </listitem>
+-            </listbox>
+-
+ 			<template name="base"/>
+-
+ 			<text style="text_ab_title">
+ 				<placement x="%col1_x_indent%" y="%ab_bc_y%"/>
+ 				<text>{@fox_modules_hdr}</text>
+ 			</text>
+-
+-			<button style="actionbar">
+-				<condition var1="of_hide_data_hint" op="!=" var2="1"/>
+-				<condition var1="fileexists" op="!=" var2="%fox_home_files%"/>
+-				<placement x="%ab_btn1_x%" y="%ab_y%" placement="4"/>
+-				<action function="overlay">dialog_lost_info</action>
+-			</button>
+-
+-			<image>
+-				<condition var1="of_hide_data_hint" op="!=" var2="1"/>
+-				<condition var1="fileexists" op="!=" var2="%fox_home_files%"/>
+-				<placement x="%ab_btn1_x%" y="%ab_y%" placement="4"/>
+-				<image resource="actionbar_help"/>
+-			</image>
+-
+ 			<template name="gestures"/>
+-
+-			<action>
+-				<touch key="home"/>
+-				<action function="page">main</action>
+-			</action>
+-
+-			<action>
+-				<touch key="back"/>
+-				<action function="page">advanced</action>
+-			</action>
++			<action><touch key="home"/><action function="page">main</action></action>
++			<action><touch key="back"/><action function="page">advanced</action></action>
+ 		</page>
+ 
+ 		<page name="fox_other_additions">
+@@ -633,6 +498,7 @@
+ 					<action function="page">fixcontexts</action>
+ 				</listitem>
+ 				<listitem name="{@inject_twrp_btn}">
++					<condition var1="vendor_boot_recovery" op="!=" var2="1"/>
+ 					<condition var1="tw_has_injecttwrp" var2="1"/>
+ 					<icon res="build"/>
+ 					<action function="set">tw_back=fox_other_additions</action>
+@@ -644,6 +510,7 @@
+ 					<action function="page">confirm_action</action>
+ 				</listitem>
+ 				<listitem name="{@fix_recovery_loop}">
++					<condition var1="vendor_boot_recovery" op="!=" var2="1"/>
+ 					<icon res="build"/>
+ 					<condition var1="tw_has_boot_slots" var2="1"/>
+ 					<condition var1="tw_has_repack_tools" var2="1"/>
+diff --git a/gui/theme/portrait_hdpi/pages/backup.xml b/gui/theme/portrait_hdpi/pages/backup.xml
+index a9d3d2dc..32df686f 100644
+--- a/gui/theme/portrait_hdpi/pages/backup.xml
++++ b/gui/theme/portrait_hdpi/pages/backup.xml
+@@ -161,7 +161,7 @@
+ 
+ 			<button style="menu_btn">
+ 				<condition var1="tw_backup_name" var2="{@auto_gen}"/>
+-				<placement x="%col1_x" y="%row2_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x%" y="%row2_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
+ 				<action function="page">backupname_auto</action>
+ 			</button>
+ 
+@@ -466,7 +466,7 @@
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="tw_password_not_match" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+@@ -518,7 +518,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_backup_encrypt_display2%</text>
+ 				<data name="tw_backup_password2" mask="*" maskvariable="tw_backup_encrypt_display2"/>
+ 				<restrict minlen="1" maxlen="32" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_"/>
+@@ -526,7 +526,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 			
+ 			<template name="gestures_key"/>
+diff --git a/gui/theme/portrait_hdpi/pages/customization.xml b/gui/theme/portrait_hdpi/pages/customization.xml
+index 3d5cc9b3..f2207b63 100644
+--- a/gui/theme/portrait_hdpi/pages/customization.xml
++++ b/gui/theme/portrait_hdpi/pages/customization.xml
+@@ -1772,6 +1772,7 @@
+ 			<template name="splash_preview"/>
+ 			<template name="base"/>
+ 
++
+ 			<text style="text_ab_title">
+ 				<placement x="%col1_x_indent%" y="%ab_bc_y%"/>
+ 				<text>{@spl_logo}</text>
+@@ -1862,6 +1863,7 @@
+ 				<action function="set">spl_bg_user=1</action>
+ 				<action function="set">spl_bg_on=1</action>
+ 				<action function="set">spl_bg_color=#00000000</action>
++				<action function="set">spl_logo_type=0</action>
+ 				<action function="cmd">
+ 						cp "%tw_splash_png_path%/%tw_splash_png_name%" "/twres/images/Splash/user.png";
+ 				</action>
+@@ -2051,8 +2053,8 @@
+ 							cat "/twres/themes/sed/splash_orig.xml" > /tmp/orangefox/ramdisk/twres/splash.xml;
+ 						fi;
+ 						cat "/tmp/orangefox/ramdisk/twres/splash.xml" > /twres/splash.xml;
+-						twrp xset spl_parsed=0;
+ 				</action>
++				<action function="set">spl_parsed=0</action>
+ 				<action function="wlfx"/>
+ 				<action function="overlay"/>
+ 				<action function="page">ext_custom</action>
+@@ -2074,11 +2076,13 @@
+ 
+ 			<action>
+ 				<condition var1="spl_parsed" op="!=" var2="1"/>
+-				<action function="set">spl_logo_type=o</action>
++				<action function="set">spl_logo_type=0</action>
+ 				<action function="set">spl_bg_color=#00000000</action>
+ 				<action function="set">spl_bg_user=0</action>
+ 				<action function="set">spl_bg_on=0</action>
+ 				<action function="set">spl_ofr=0</action>
++				<action function="set">tw_splash_png_path=/twres/images/Splash</action>
++				<action function="set">tw_splash_png_name=user.png</action>
+ 				<action function="ftls">
+ 					splash=/twres/splash.xml;
+ 					spl_logo_string=`cat $splash | grep 'image name="splash_logo"'`;
+diff --git a/gui/theme/portrait_hdpi/pages/files.xml b/gui/theme/portrait_hdpi/pages/files.xml
+index c4b4fc06..52c2532d 100644
+--- a/gui/theme/portrait_hdpi/pages/files.xml
++++ b/gui/theme/portrait_hdpi/pages/files.xml
+@@ -43,9 +43,6 @@
+ 			<template name="body_nav"/>
+ 			<template name="base_nav_basic"/>
+ 
+-			<template name="navbar_home"/>
+-			<template name="navbar_console"/>
+-			<template name="navbar_back_classic"/>
+ 			
+ 			<image>
+ 				<placement x="48" y="%search_bar_bg_y%" />
+@@ -1161,7 +1158,7 @@
+ 			
+ 			<button style="menu_btn">
+ 				<condition var1="ft_inf_md5" var2="{@tap_to_generate}"/>
+-				<placement x="%col1_x_caption%" y="%row2_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row2_1a_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">ft_inf_md5={@calc_checksum}</action>
+ 				<action function="set">ft_chsum_calculated=0</action>
+ 				<action function="page">fm_file_checksum_calc</action>
+@@ -1170,7 +1167,7 @@
+ 			</button>
+ 			<button style="menu_btn">
+ 				<condition var1="ft_inf_sha1" var2="{@tap_to_generate}"/>
+-				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">ft_chsum_calculated=0</action>
+ 				<action function="set">ft_inf_sha1={@calc_checksum}</action>
+ 				<action function="page">fm_file_checksum_calc</action>
+@@ -1179,7 +1176,7 @@
+ 			</button>
+ 			<button style="menu_btn">
+ 				<condition var1="ft_inf_sha2" var2="{@tap_to_generate}"/>
+-				<placement x="%col1_x_caption%" y="%row4_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row4_1a_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">ft_chsum_calculated=0</action>
+ 				<action function="set">ft_inf_sha2={@calc_checksum}</action>
+ 				<action function="page">fm_file_checksum_calc</action>
+@@ -1188,7 +1185,7 @@
+ 			</button>
+ 			<button style="menu_btn">
+ 				<condition var1="ft_inf_sha5" var2="{@tap_to_generate}"/>
+-				<placement x="%col1_x_caption%" y="%row5_1a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row5_1a_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">ft_chsum_calculated=0</action>
+ 				<action function="set">ft_inf_sha5={@calc_checksum}</action>
+ 				<action function="page">fm_file_checksum_calc</action>
+@@ -1411,7 +1408,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_filemanager_rename%</text>
+ 				<data name="tw_filemanager_rename"/>
+ 				<restrict minlen="1" maxlen="64" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.{}[]() "/>
+@@ -1423,7 +1420,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<template name="gestures_key"/>
+@@ -1463,7 +1460,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_filemanager_rename%</text>
+ 				<data name="tw_filemanager_rename"/>
+ 				<restrict minlen="1" maxlen="64" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.{}[]() "/>
+@@ -1475,7 +1472,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<template name="gestures_key"/>
+@@ -1692,7 +1689,7 @@
+ 			</text>
+ 			
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_filemanager_rename%</text>
+ 				<data name="tw_filemanager_rename"/>
+ 				<restrict minlen="3" maxlen="4" allow="01234567"/>
+@@ -1703,7 +1700,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<listbox style="group_list">
+diff --git a/gui/theme/portrait_hdpi/pages/fox.xml b/gui/theme/portrait_hdpi/pages/fox.xml
+index 611b6151..c86e3bfa 100644
+--- a/gui/theme/portrait_hdpi/pages/fox.xml
++++ b/gui/theme/portrait_hdpi/pages/fox.xml
+@@ -288,7 +288,7 @@
+ 					<action function="page">scaling</action>
+ 				</listitem>
+ 				<listitem name="Reset scaling">
+-					<action function="ftls">rm -f %fox_home_path%/scaling; pkill recovery</action>
++					<action function="ftls">rm -f %fox_settings_path%/scaling; pkill recovery</action>
+ 				</listitem>
+ 			</listbox>
+ 
+@@ -428,7 +428,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%dbg_b%</text>
+ 				<data name="dbg_b"/>
+ 				<restrict minlen="0" maxlen="512"/>
+@@ -437,7 +437,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<template name="gestures_key"/>
+@@ -467,7 +467,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%dbg%</text>
+ 				<data name="dbg"/>
+ 				<restrict minlen="1" maxlen="32" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_="/>
+@@ -475,7 +475,7 @@
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<template name="gestures_key"/>
+@@ -505,15 +505,15 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%scaling_dbg%</text>
+ 				<data name="scaling_dbg"/>
+ 				<restrict minlen="1" maxlen="6" allow="1234567890."/>
+-				<action function="ftls">echo "%scaling_dbg%" > %fox_home_path%/scaling; pkill recovery</action>
++				<action function="ftls">echo "%scaling_dbg%" > %fox_settings_path%/scaling; pkill recovery</action>
+ 			</input>
+ 
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<template name="gestures_key"/>
+diff --git a/gui/theme/portrait_hdpi/pages/mount.xml b/gui/theme/portrait_hdpi/pages/mount.xml
+index 2c15dc91..c315284b 100644
+--- a/gui/theme/portrait_hdpi/pages/mount.xml
++++ b/gui/theme/portrait_hdpi/pages/mount.xml
+@@ -340,7 +340,7 @@
+ 
+ 			<button style="menu_btn">
+ 				<condition var1="of_decrypt_from_menu" var2="2"/>
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">tw_page_done=1</action>
+ 				<action function="page">decrypt_redirect</action>
+ 			</button>
+diff --git a/gui/theme/portrait_hdpi/pages/pass.xml b/gui/theme/portrait_hdpi/pages/pass.xml
+index e73554ed..6c876390 100644
+--- a/gui/theme/portrait_hdpi/pages/pass.xml
++++ b/gui/theme/portrait_hdpi/pages/pass.xml
+@@ -270,7 +270,7 @@
+ 			<template name="page_new_pass"/>
+ 			
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%pass_new_1_mask%</text>
+ 				<data name="pass_new_1" mask="*" maskvariable="pass_new_1_mask"/>
+ 				<restrict minlen="0" maxlen="64" />
+@@ -286,7 +286,7 @@
+ 			<template name="page_new_pass_2"/>
+ 			
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%pass_new_2_mask%</text>
+ 				<data name="pass_new_2" mask="*" maskvariable="pass_new_2_mask"/>
+ 				<restrict minlen="0" maxlen="64"/>
+@@ -303,7 +303,7 @@
+ 			<template name="page_new_pass"/>
+ 			
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%pass_new_1_mask%</text>
+ 				<data name="pass_new_1" mask="*" maskvariable="pass_new_1_mask"/>
+ 				<restrict minlen="0" maxlen="64" />
+@@ -319,7 +319,7 @@
+ 			<template name="page_new_pass_2"/>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%pass_new_2_mask%</text>
+ 				<data name="pass_new_2" mask="*" maskvariable="pass_new_2_mask"/>
+ 				<restrict minlen="0" maxlen="64"/>
+diff --git a/gui/theme/portrait_hdpi/pages/restore.xml b/gui/theme/portrait_hdpi/pages/restore.xml
+index 835b6ec8..b7c0325d 100644
+--- a/gui/theme/portrait_hdpi/pages/restore.xml
++++ b/gui/theme/portrait_hdpi/pages/restore.xml
+@@ -200,9 +200,6 @@
+ 				<action function="page">restore</action>
+ 			</button>
+ 
+-			<template name="navbar_home"/>
+-			<template name="navbar_console"/>
+-			<template name="navbar_back_classic"/>
+ 			<template name="navbar_back_restore"/>
+ 			<template name="gestures_basic"/>
+ 
+@@ -313,7 +310,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row4_2_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row4_2_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_restore_display%</text>
+ 				<data name="tw_restore_password" mask="*" maskvariable="tw_restore_display"/>
+ 				<restrict minlen="1" maxlen="32" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_"/>
+@@ -322,12 +319,12 @@
+ 
+ 			<fill color="%accent%">
+ 				<condition var1="tw_password_fail" op="!=" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row4_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row4_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="tw_password_fail" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row4_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row4_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+@@ -512,7 +509,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row2_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%tw_backup_rename%</text>
+ 				<data name="tw_backup_rename"/>
+ 				<restrict minlen="1" maxlen="64" allow="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.{}[]() "/>
+@@ -527,12 +524,12 @@
+ 
+ 			<fill color="%accent%">
+ 				<condition var1="tw_fileexists" var2="0"/>
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="tw_fileexists" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row2_3a_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+diff --git a/gui/theme/portrait_hdpi/pages/settings.xml b/gui/theme/portrait_hdpi/pages/settings.xml
+index db827849..c1f185e7 100644
+--- a/gui/theme/portrait_hdpi/pages/settings.xml
++++ b/gui/theme/portrait_hdpi/pages/settings.xml
+@@ -859,7 +859,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row1_2_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%zone_temp%</text>
+ 				<data name="zone_temp"/>
+ 				<restrict minlen="1" maxlen="2" allow="1234567890" />
+@@ -870,12 +870,12 @@
+ 
+ 			<fill color="%accent%">
+ 				<condition var1="zone_error" op="!=" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="zone_error" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row1_3_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+diff --git a/gui/theme/portrait_hdpi/pages/templates/base.xml b/gui/theme/portrait_hdpi/pages/templates/base.xml
+index 1c3cc323..c9c2f811 100644
+--- a/gui/theme/portrait_hdpi/pages/templates/base.xml
++++ b/gui/theme/portrait_hdpi/pages/templates/base.xml
+@@ -94,10 +94,6 @@
+ 			<template name="body_nav"/>
+ 			<template name="ab_main"/>
+ 			<template name="base_nav_basic"/>
+-			
+-			<template name="navbar_home"/>
+-			<template name="navbar_console"/>
+-			<template name="navbar_back_classic"/>
+ 		</template>
+ 
+         <template name="base_nav_basic">
+@@ -316,7 +312,6 @@
+ 
+ 		<template name="dialog_body_noback">
+ 			<background color="%transparent%"/>
+-			<template name="navbar_bkg"/>
+ 
+ 			<fill color="%darktransparent%">
+ 				<placement x="0" y="0" w="%screen_w%" h="%screen_h%"/>
+diff --git a/gui/theme/portrait_hdpi/pages/templates/navbar.xml b/gui/theme/portrait_hdpi/pages/templates/navbar.xml
+index 00ad8196..ddabda22 100644
+--- a/gui/theme/portrait_hdpi/pages/templates/navbar.xml
++++ b/gui/theme/portrait_hdpi/pages/templates/navbar.xml
+@@ -170,7 +170,6 @@
+ 		</template>
+ 
+ 		<template name="navbar_console_hide">
+-			<template name="navbar_bkg"/>
+ 			
+ 			<button style="nb_btn">
+ 				<condition var1="real_gestures_enable" op="!=" var2="1"/>
+diff --git a/gui/theme/portrait_hdpi/pages/templates/templates.xml b/gui/theme/portrait_hdpi/pages/templates/templates.xml
+index 9dd03df7..c250196a 100644
+--- a/gui/theme/portrait_hdpi/pages/templates/templates.xml
++++ b/gui/theme/portrait_hdpi/pages/templates/templates.xml
+@@ -150,7 +150,7 @@
+ 			</text>
+ 			
+ 			<fill color="%accent%">
+-				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 			
+ 			<action>
+@@ -205,12 +205,12 @@
+ 			
+ 			<fill color="%accent%">
+ 				<condition var1="pass_notm" var2="0"/>
+-				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="pass_notm" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+@@ -321,7 +321,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<text>%pass_enter_mask%</text>
+ 				<data name="pass_enter" mask="*" maskvariable="pass_enter_mask"/>
+ 				<restrict minlen="0" maxlen="64" />
+@@ -330,12 +330,12 @@
+ 
+ 			<fill color="%accent%">
+ 				<condition var1="pass_not_match" var2="0"/>
+-				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="pass_not_match" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2_y%" w="%input_caption_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+@@ -739,7 +739,6 @@
+ 			</image-->
+ 			<image>
+ 				<condition var1="spl_bg_on" var2="1"/>
+-				<condition var1="spl_bg_color" var2="#00000000"/>
+ 				<image resource="splash_user"/>
+ 				<placement x="%center_x%" y="%row2_3_y%" placement="4"/>
+ 			</image>
+@@ -830,7 +829,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_backup_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_caption_backup_w%" h="%input_height%"/>
+ 				<text>%tw_crypto_display%</text>
+ 				<data name="tw_crypto_password" mask="*" maskvariable="tw_crypto_display"/>
+ 				<restrict minlen="1" maxlen="254"/>
+@@ -839,7 +838,7 @@
+ 
+ 			<input>
+ 				<condition var1="of_show_pass" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_backup_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_1a_y%" w="%input_caption_backup_w%" h="%input_height%"/>
+ 				<text>%tw_crypto_password%</text>
+ 				<data name="tw_crypto_password"/>
+ 				<cursor color="%transparent%" hasfocus="0" width="0"/>
+@@ -855,12 +854,12 @@
+ 
+ 			<fill color="%accent%">
+ 				<condition var1="tw_password_fail" op="!=" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_backup_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_caption_backup_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<fill color="%text_fail%">
+ 				<condition var1="tw_password_fail" var2="1"/>
+-				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_backup_w%" h="%input_line_height%" placement="1"/>
++				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_caption_backup_w%" h="%input_line_height%" placement="1"/>
+ 			</fill>
+ 
+ 			<text style="text_input_fail">
+@@ -883,7 +882,7 @@
+ 
+ 			<button style="menu_btn">
+ 				<condition var1="of_decrypt_from_menu" var2="2"/>
+-				<placement x="%col1_x_caption%" y="%row4_1_y%" w="%input_w%" h="%mb_h_hide%"/>
++				<placement x="%col1_x_caption%" y="%row4_1_y%" w="%input_caption_w%" h="%mb_h_hide%"/>
+ 				<action function="set">tw_page_done=1</action>
+ 				<action function="page">decrypt_redirect</action>
+ 			</button>
+@@ -951,7 +950,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row3_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<cursor color="%transparent%" hasfocus="0" width="0"/>
+ 				<data name="ft_inf_sha1"/>
+ 				<restrict disable="1"/>
+@@ -964,7 +963,7 @@
+ 			</text>
+ 
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row4_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row4_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<cursor color="%transparent%" hasfocus="0" width="0"/>
+ 				<data name="ft_inf_sha2"/>
+ 				<restrict disable="1"/>
+@@ -977,7 +976,7 @@
+ 			</text>
+ 			
+ 			<input>
+-				<placement x="%col1_x_caption%" y="%row5_2a_y%" w="%input_w%" h="%input_height%"/>
++				<placement x="%col1_x_caption%" y="%row5_2a_y%" w="%input_caption_w%" h="%input_height%"/>
+ 				<cursor color="%transparent%" hasfocus="0" width="0"/>
+ 				<data name="ft_inf_sha5"/>
+ 				<restrict disable="1"/>
+diff --git a/gui/theme/portrait_hdpi/pages/wipe.xml b/gui/theme/portrait_hdpi/pages/wipe.xml
+index b8899de3..0890e99e 100644
+--- a/gui/theme/portrait_hdpi/pages/wipe.xml
++++ b/gui/theme/portrait_hdpi/pages/wipe.xml
+@@ -10,10 +10,7 @@
+ 			<template name="body_nav"/>
+ 			<template name="base_nav_basic"/>
+ 			
+-			<template name="navbar_home"/>
+-			<template name="navbar_console"/>
+-			<template name="navbar_back_classic"/>
+-			<template name="tabs"/>
++			<template name="status_bg"/>
+ 			
+ 			<button style="tab_btn_hl">
+ 				<placement x="156" y="%tab_btn_y%" w="360" h="84"/>
+@@ -89,7 +86,6 @@
+ 
+ 		<page name="formatdata">
+ 			<template name="body_key"/>
+-			<template name="statusbarinfo"/>
+ 			<template name="tabs"/>
+ 			
+ 			<button style="tab_btn">
+diff --git a/gui/theme/portrait_hdpi/resources/vars.xml b/gui/theme/portrait_hdpi/resources/vars.xml
+index 7dcffc29..134b8fdf 100644
+--- a/gui/theme/portrait_hdpi/resources/vars.xml
++++ b/gui/theme/portrait_hdpi/resources/vars.xml
+@@ -231,6 +231,8 @@
+ 		<variable name="col1_x_caption" value="216"/>
+ 		<variable name="input_w" value="984"/>
+ 		<variable name="input_backup_w" value="905"/>
++		<variable name="input_caption_w" value="816"/>
++		<variable name="input_caption_backup_w" value="708"/>
+ 		
+ 		<variable name="col_col_center_x" value="386"/>
+ 		<variable name="col_x_color3" value="724"/>
+@@ -437,7 +439,7 @@
+ 		<variable name="main_switch_icon_x" value="946"/>
+ 
+ 		<!-- Advanced -->
+-		<variable name="adv_additions_h" value="%screen_w%-200"/>
++		<variable name="adv_additions_h" value="%screen_min_cut%-1380"/>
+ 
+ 		<!-- Sort menu -->
+ 		<variable name="ab_menu_y" value="72+%cutout_w%"/>
+diff --git a/libtar/Android.mk b/libtar/Android.mk
+index c3bb691f..9884569f 100755
+--- a/libtar/Android.mk
++++ b/libtar/Android.mk
+@@ -22,7 +22,7 @@ ifeq ($(TW_INCLUDE_CRYPTO_FBE), true)
+         android.hardware.keymaster@3.0 \
+         android.hardware.keymaster@4.0 \
+         android.hardware.keymaster@4.1 \
+-        android.hardware.weaver@1.0 \
++        android.hardware.weaver-V1-ndk_platform \
+         android.security.apc-ndk_platform \
+         android.system.keystore2-V1-ndk_platform \
+         android.security.authorization-ndk_platform \
+diff --git a/minuitwrp/events.cpp b/minuitwrp/events.cpp
+index e497df62..0ca000cc 100644
+--- a/minuitwrp/events.cpp
++++ b/minuitwrp/events.cpp
+@@ -19,6 +19,7 @@
+ #include <fcntl.h>
+ #include <dirent.h>
+ #include <sys/poll.h>
++#include <sys/ioctl.h>
+ #include <limits.h>
+ #include <linux/input.h>
+ #include <sys/types.h>
+@@ -27,9 +28,9 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <fstream>
+-#ifdef USE_QTI_AIDL_HAPTICS_FIX_OFF
+ #include <thread>
+-#endif
++#include <mutex>
++#include <atomic>
+ 
+ #ifdef USE_QTI_HAPTICS
+ #include <android/hardware/vibrator/1.2/IVibrator.h>
+@@ -145,6 +146,95 @@ int write_to_file(const std::string& fn, const std::string& line) {
+ 	return -1;
+ }
+ 
++static std::mutex fs3002_ff_mutex;
++static int fs3002_ff_fd = -1;
++static int fs3002_ff_effect_id = -1;
++static std::atomic<unsigned long long> fs3002_ff_generation{0};
++
++static bool init_fs3002_ff_locked() {
++    if (fs3002_ff_fd >= 0)
++        return true;
++
++    for (int i = 0; i < MAX_DEVICES; ++i) {
++        char path[64];
++        char name[128] = {};
++        snprintf(path, sizeof(path), "/dev/input/event%d", i);
++
++        int fd = open(path, O_RDWR | O_CLOEXEC);
++        if (fd < 0)
++            continue;
++
++        if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0 || strcmp(name, "fshaptic") != 0) {
++            close(fd);
++            continue;
++        }
++
++        struct input_event gain = {};
++        gain.type = EV_FF;
++        gain.code = FF_GAIN;
++        gain.value = 0xffff;
++        if (write(fd, &gain, sizeof(gain)) != sizeof(gain))
++            LOGI("FS3002: failed to set gain on %s\n", path);
++
++        fs3002_ff_fd = fd;
++        LOGI("FS3002: cached haptic device %s\n", path);
++        return true;
++    }
++
++    return false;
++}
++
++static bool vibrate_fs3002_ff(int timeout_ms) {
++    std::lock_guard<std::mutex> lock(fs3002_ff_mutex);
++    if (!init_fs3002_ff_locked())
++        return false;
++
++    if (fs3002_ff_effect_id >= 0) {
++        struct input_event stop = {};
++        stop.type = EV_FF;
++        stop.code = fs3002_ff_effect_id;
++        stop.value = 0;
++        write(fs3002_ff_fd, &stop, sizeof(stop));
++    }
++
++    struct ff_effect effect = {};
++    effect.type = FF_CONSTANT;
++    effect.id = fs3002_ff_effect_id;
++    effect.replay.length = static_cast<__u16>(timeout_ms);
++    effect.u.constant.level = 0x7fff;
++
++    if (ioctl(fs3002_ff_fd, EVIOCSFF, &effect) < 0) {
++        LOGI("FS3002: EVIOCSFF failed on cached device\n");
++        return false;
++    }
++    fs3002_ff_effect_id = effect.id;
++
++    struct input_event play = {};
++    play.type = EV_FF;
++    play.code = fs3002_ff_effect_id;
++    play.value = 1;
++    if (write(fs3002_ff_fd, &play, sizeof(play)) != sizeof(play)) {
++        LOGI("FS3002: failed to start cached effect\n");
++        return false;
++    }
++
++    const unsigned long long generation = ++fs3002_ff_generation;
++    std::thread([generation, timeout_ms]() {
++        usleep(timeout_ms * 1000);
++        if (fs3002_ff_generation.load() != generation)
++            return;
++        std::lock_guard<std::mutex> lock(fs3002_ff_mutex);
++        if (fs3002_ff_generation.load() != generation || fs3002_ff_fd < 0 || fs3002_ff_effect_id < 0)
++            return;
++        struct input_event stop = {};
++        stop.type = EV_FF;
++        stop.code = fs3002_ff_effect_id;
++        stop.value = 0;
++        write(fs3002_ff_fd, &stop, sizeof(stop));
++    }).detach();
++    return true;
++}
++
+ #ifndef TW_NO_HAPTICS
+ #ifndef TW_HAPTICS_TSPDRV
+ int vibrate(int timeout_ms)
+@@ -182,6 +272,9 @@ int vibrate(int timeout_ms)
+         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
+     }
+ #else
++    if (vibrate_fs3002_ff(timeout_ms)) {
++        return 0;
++    }
+     if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good()) {
+         write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
+         write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
+diff --git a/mtp/ffs/MtpStorage.cpp b/mtp/ffs/MtpStorage.cpp
+index 8c67b5bd..ef9b0db9 100755
+--- a/mtp/ffs/MtpStorage.cpp
++++ b/mtp/ffs/MtpStorage.cpp
+@@ -32,7 +32,7 @@
+ #include <iterator>
+ #include <sys/inotify.h>
+ 
+-#define WATCH_FLAGS ( IN_CREATE | IN_DELETE | IN_MOVE | IN_MODIFY )
++#define WATCH_FLAGS ( IN_CREATE | IN_DELETE | IN_MOVE | IN_MODIFY | IN_CLOSE_WRITE )
+ 
+ MtpStorage::MtpStorage(MtpStorageID id, const char* filePath,
+ 		const char* description, bool removable, uint64_t maxFileSize, MtpServer* refserver)
+@@ -484,6 +484,16 @@ void MtpStorage::handleInotifyEvent(struct inotify_event* event)
+ 				} else {
+ 						MTPE("inotify_t modified item not found\n");
+ 				}
++		} else if (event->mask & IN_CLOSE_WRITE) {
++				MTPD("inotify_t item %s closed after write.\n", event->name);
++				if (node != NULL && !(event->mask & IN_ISDIR)) {
++						struct stat st;
++						if (lstat(getNodePath(node).c_str(), &st) == 0) {
++								uint64_t final_size = (uint64_t)st.st_size;
++								node->updateProperty(MTP_PROPERTY_OBJECT_SIZE, final_size, "", MTP_TYPE_UINT64);
++								mServer->sendObjectInfoChanged(node->Mtpid());
++						}
++				}
+ 		} else if (event->mask & IN_DELETE_SELF || event->mask & IN_MOVE_SELF) {
+ 				// TODO: is this always already handled by IN_DELETE for the parent dir?
+ 		}
+diff --git a/orangefox.mk b/orangefox.mk
+index a0337c06..e472d213 100644
+--- a/orangefox.mk
++++ b/orangefox.mk
+@@ -661,6 +661,13 @@ ifeq ($(OF_SUPPORT_VBMETA_AVB2_PATCHING),1)
+     LOCAL_CFLAGS += -DOF_SUPPORT_VBMETA_AVB2_PATCHING='"1"'
+ endif
+ 
++ifeq ($(TARGET_PRODUCT),twrp_dash)
++    FOX_SETTINGS_ROOT_DIRECTORY := /persist
++    FOX_MISCELLANEOUS_ROOT_DIRECTORY := /sdcard
++    FOX_ALLOW_EARLY_SETTINGS_LOAD := 1
++    LOCAL_CFLAGS += -DFOX_DASH_SHARED_SETTINGS_ROOT=1
++endif
++
+ # custom settings directory
+ ifeq ($(FOX_USE_DATA_RECOVERY_FOR_SETTINGS),1)
+     ifneq ($(FOX_SETTINGS_ROOT_DIRECTORY),)
+diff --git a/orangefox_defaults.go b/orangefox_defaults.go
+index a85f64d9..3b022461 100644
+--- a/orangefox_defaults.go
++++ b/orangefox_defaults.go
+@@ -37,16 +37,23 @@ func fox_globalFlags(ctx android.BaseContext) []string {
+ 		foxflags = append(foxflags, "-DOF_SUPPORT_OZIP_DECRYPTION=1")
+ 	}
+ 
+-	if ctx.AConfig().Getenv("FOX_ALLOW_EARLY_SETTINGS_LOAD") == "1" {
++	isDash := ctx.AConfig().Getenv("TARGET_PRODUCT") == "twrp_dash"
++	if ctx.AConfig().Getenv("FOX_ALLOW_EARLY_SETTINGS_LOAD") == "1" || isDash {
+ 		foxflags = append(foxflags, "-DFOX_ALLOW_EARLY_SETTINGS_LOAD=1")
+ 	}
+ 
+-	if ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY") != "" {
+-		foxflags = append(foxflags, "-DFOX_SETTINGS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY")+"\"")
+-	}
++	if isDash {
++		foxflags = append(foxflags, "-DFOX_DASH_SHARED_SETTINGS_ROOT=1")
++		foxflags = append(foxflags, "-DFOX_SETTINGS_ROOT_DIRECTORY=\"/persist\"")
++		foxflags = append(foxflags, "-DFOX_MISCELLANEOUS_ROOT_DIRECTORY=\"/sdcard\"")
++	} else {
++		if ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY") != "" {
++			foxflags = append(foxflags, "-DFOX_SETTINGS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY")+"\"")
++		}
+ 
+-	if ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY") != "" {
+-		foxflags = append(foxflags, "-DFOX_MISCELLANEOUS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY")+"\"")
++		if ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY") != "" {
++			foxflags = append(foxflags, "-DFOX_MISCELLANEOUS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY")+"\"")
++		}
+ 	}
+ 
+ 	if ctx.AConfig().Getenv("FOX_USE_DATA_RECOVERY_FOR_SETTINGS") == "1" {
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index b52a7d49..2e03c15a 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -489,12 +489,21 @@ clear:
+ 		}
+ 	}
+ 
++	TWPartition* ven = PartitionManager.Find_Partition_By_Path("/vendor");
++	TWPartition* odm = PartitionManager.Find_Partition_By_Path("/odm");
++
+ #ifdef TW_LOAD_VENDOR_MODULES
++#ifdef TW_LOAD_VENDOR_MODULES_KEEP_ODM
++	if (recovery_mode && odm) odm->Mount(Display_Error);
++#endif
+ 	KernelModuleLoader::Load_Vendor_Modules();
+ #endif
+-
+-	TWPartition* ven = PartitionManager.Find_Partition_By_Path("/vendor");
+-	TWPartition* odm = PartitionManager.Find_Partition_By_Path("/odm");
++#ifdef TW_PREDECRYPT_INIT_SYNC
++	if (recovery_mode && !parse_userdata) {
++		LOGINFO("Starting pre-decrypt init stack after native module loading\n");
++		android::base::SetProperty("twrp.predecrypt.start", "1");
++	}
++#endif
+ 	if (recovery_mode && !parse_userdata) {
+ 		if (ven) ven->Mount(Display_Error);
+ 		if (odm) odm->Mount(Display_Error);
+@@ -522,7 +531,9 @@ clear:
+ #endif
+ 
+ 	usleep(65536);
++#ifndef TW_LOAD_VENDOR_MODULES_KEEP_ODM
+ 	if (odm) odm->UnMount(Display_Error);
++#endif
+ 	if (recovery_mode)
+ 		Process_Keymaster_Version(ven, false);
+ 	if (ven) ven->UnMount(Display_Error);
+@@ -627,7 +638,17 @@ void TWPartitionManager::Setup_Fstab_Partitions(bool Display_Error) {
+ 
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 		DataManager::SetValue(TW_IS_ENCRYPTED, 1);
++	#ifdef TW_PREDECRYPT_INIT_SYNC
++		if (!android::base::WaitForProperty("twrp.predecrypt.ready", "1", std::chrono::seconds(15)))
++			LOGERR("Timed out waiting for pre-decrypt init stack; continuing with native decrypt path\n");
++		else
++			LOGINFO("Pre-decrypt init stack ready; entering native decrypt path\n");
++	#endif
++#ifdef TW_DEFER_DATA_DECRYPT
++		LOGINFO("DASH: deferring initial data decryption until UI is available\n");
++#else
+ 		Decrypt_Data();
++#endif
+ 	#endif
+ 
+ 		Update_System_Details();
+@@ -2145,10 +2166,21 @@ void TWPartitionManager::Update_System_Details(void) {
+ 	if (FreeStorage != NULL) {
+ 		// Attempt to mount storage
+ 		if (!FreeStorage->Mount(false)) {
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++			const bool dash_locked_storage = TWFunc::Get_Root_Path(current_storage_path) == "/data" &&
++				DataManager::GetIntValue(TW_IS_ENCRYPTED) == 1 &&
++				DataManager::GetIntValue(TW_IS_DECRYPTED) == 0;
++			const bool removable_absent = FreeStorage->Removable && !FreeStorage->Is_Present;
++			if (dash_locked_storage || removable_absent)
++				LOGINFO("DASH: storage '%s' unavailable in current state; suppressing harmless UI warning\n", current_storage_path.c_str());
++			else
++				gui_msg(Msg(msg::kWarning, "unable_to_mount_storage=Unable to mount storage"));
++#else
+ 			if (current_storage_path == "/usb_otg")
+ 				LOGINFO("Unable to mount storage ('%s')\n", current_storage_path.c_str());
+ 			else
+ 				gui_msg(Msg(msg::kWarning, "unable_to_mount_storage=Unable to mount storage"));
++#endif
+ 			DataManager::SetValue(TW_STORAGE_FREE_SIZE, 0);
+ 		} else {
+ 			DataManager::SetValue(TW_STORAGE_FREE_SIZE, (int)(FreeStorage->Free / 1048576LLU));
+@@ -2859,6 +2891,10 @@ void TWPartitionManager::Get_Partition_List(string ListType,
+     {
+       for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
+ 	{
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++          if ((*iter)->Mount_Point == "/persist" || (*iter)->Mount_Point == "/cache")
++            continue;
++#endif
+ 	  if ((*iter)->Can_Be_Mounted)
+ 	    {
+ 	      struct PartitionList part;
+@@ -2873,6 +2909,10 @@ void TWPartitionManager::Get_Partition_List(string ListType,
+     {
+       for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
+ 	{
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++          if ((*iter)->Mount_Point == "/cache")
++            continue;
++#endif
+ 	  if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition)
+ 	    {
+ 	      struct PartitionList part;
+@@ -4564,9 +4604,18 @@ void TWPartitionManager::Update_System_Details_OTA_Survival(void)
+       // Attempt to mount storage
+       if (!FreeStorage->Mount(false))
+ 	{
+-	  gui_msg(Msg
+-		  (msg::kError,
+-		   "unable_to_mount_storage=Unable to mount storage"));
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	  const bool dash_locked_storage = TWFunc::Get_Root_Path(current_storage_path) == "/data" &&
++		DataManager::GetIntValue(TW_IS_ENCRYPTED) == 1 &&
++		DataManager::GetIntValue(TW_IS_DECRYPTED) == 0;
++	  const bool removable_absent = FreeStorage->Removable && !FreeStorage->Is_Present;
++	  if (dash_locked_storage || removable_absent)
++	    LOGINFO("DASH: storage '%s' unavailable in current state; suppressing harmless UI warning\n", current_storage_path.c_str());
++	  else
++	    gui_msg(Msg(msg::kError, "unable_to_mount_storage=Unable to mount storage"));
++#else
++	  gui_msg(Msg(msg::kError, "unable_to_mount_storage=Unable to mount storage"));
++#endif
+ 	  DataManager::SetValue(TW_STORAGE_FREE_SIZE, 0);
+ 	}
+       else
+diff --git a/prebuilt/Android.mk b/prebuilt/Android.mk
+index 4be29d8b..5cf6eba4 100755
+--- a/prebuilt/Android.mk
++++ b/prebuilt/Android.mk
+@@ -246,11 +246,8 @@ ifeq ($(TW_INCLUDE_CRYPTO), true)
+             RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/libkeymaster_staging.so
+         endif
+         RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/libwifikeystorehal.so
+-        ifneq ($(wildcard hardware/interfaces/weaver/Android.bp),)
+-            RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.weaver@1.0.so
+-        endif
+-        ifneq ($(wildcard hardware/interfaces/weaver/1.0/Android.bp),)
+-            RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.weaver@1.0.so
++        ifneq ($(wildcard hardware/interfaces/weaver/aidl/Android.bp),)
++            RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.weaver-V1-ndk_platform.so
+         endif
+         ifneq ($(wildcard hardware/interfaces/confirmationui/1.0/Android.bp),)
+             RECOVERY_LIBRARY_SOURCE_FILES += $(TARGET_OUT_SHARED_LIBRARIES)/android.hardware.confirmationui@1.0.so
+diff --git a/soong/copy.go b/soong/copy.go
+index 6b3a7667..49517c14 100755
+--- a/soong/copy.go
++++ b/soong/copy.go
+@@ -7,9 +7,7 @@ import (
+ 	"io/ioutil"
+ 	"os"
+ 	"path"
+-	"runtime"
+ 	"path/filepath"
+-	"strings"
+ )
+ 
+ func getRecoveryAbsDir(ctx android.BaseContext) string {
+@@ -17,10 +15,7 @@ func getRecoveryAbsDir(ctx android.BaseContext) string {
+ }
+ 
+ func getBuildAbsDir(ctx android.BaseContext) string {
+-	var b string
+-	_, b, _, _ = runtime.Caller(0)
+-	absIndex := strings.Index(filepath.Dir(b), "bootable")
+-	return string(b[0:absIndex])
++	return filepath.Clean(android.AbsSrcDirForExistingUseCases()) + string(os.PathSeparator)
+ }
+ 
+ func copyDir(src string, dest string) error {
+diff --git a/twrp.cpp b/twrp.cpp
+index 6f9e8585..698250ee 100644
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -29,6 +29,11 @@
+ #include <signal.h>
+ #include <thread>
+ #include <chrono>
++#if defined(__ANDROID_API_N__)
++#include <android-base/properties.h>
++#else
++#include <base/properties.h>
++#endif
+ #include "recovery_utils/battery_utils.h"
+ #include "gui/twmsg.h"
+ #include "cutils/properties.h"
+@@ -115,6 +120,8 @@ static void Decrypt_Page(bool SkipDecryption, bool datamedia) {
+ static void process_fastbootd_mode() {
+ 		LOGINFO("starting fastboot\n");
+ 
++		TWFunc::RunFoxScript("/system/bin/prefastboot.sh", "");
++
+ 		if (android::base::GetBoolProperty("ro.boot.dynamic_partitions", false)) {
+ 			PartitionManager.Unmap_Super_Devices();
+ 		}
+@@ -253,6 +260,18 @@ static void process_recovery_mode(twrpAdbBuFifo* adb_bu_fifo, bool skip_decrypti
+ #endif
+ 	Decrypt_Page(skip_decryption, datamedia);
+ 
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++	const bool fox_user0_decrypted =
++		TWFunc::Fox_Property_Get("twrp.user.0.decrypt") == "1" ||
++		(!DataManager::GetIntValue(TW_IS_FBE) && DataManager::GetIntValue(TW_IS_DECRYPTED));
++	if (fox_user0_decrypted) {
++		LOGINFO("DASH: user0 decrypted; synchronizing shared recovery state\n");
++		TWFunc::RunFoxScript("/system/bin/dash-settings-migrate.sh", "postdecrypt");
++		DataManager::ReadSettingsFile();
++		DataManager::Flush();
++	}
++#endif
++
+ 	// Check for and load custom theme if present
+ 	TWFunc::check_selinux_support();
+ 	gui_loadCustomResources();
+@@ -404,7 +423,11 @@ static bool Fox_CheckReload_Themes() {
+ 	DataManager::SetValue(FOX_ENCRYPTED_DEVICE, "1");
+     }
+ #if defined(FOX_ALLOW_EARLY_SETTINGS_LOAD) && defined(FOX_SETTINGS_ROOT_DIRECTORY)
++#ifdef FOX_DASH_SHARED_SETTINGS_ROOT
++  return TWFunc::Path_Exists("/tmp/dash-ui-state-migrated");
++#else
+   return false;
++#endif
+ #else
+   return (TWFunc::Path_Exists(FOX_THEME_PATH) || TWFunc::Path_Exists(FOX_NAVBAR_PATH));
+ #endif
+@@ -553,6 +576,20 @@ int main(int argc, char **argv) {
+ 	// Load up all the resources
+ 	gui_loadResources();
+ 
++#if defined(TW_INCLUDE_CRYPTO) && defined(TW_DEFER_DATA_DECRYPT)
++	if (!startup.Get_Fastboot_Mode() && !startup.Should_Skip_Decryption()) {
++		LOGINFO("DASH: GUI resources ready; resuming deferred data decrypt preparation\n");
++		if (!android::base::WaitForProperty("init.svc.vendor.keymint-mitee", "running", std::chrono::seconds(10)))
++			LOGERR("DASH: KeyMint service not running after 10s; attempting native decrypt preparation anyway\n");
++		if (!android::base::WaitForProperty("init.svc.keystore2", "running", std::chrono::seconds(10)))
++			LOGERR("DASH: keystore2 not running after 10s; attempting native decrypt preparation anyway\n");
++		PartitionManager.Decrypt_Data();
++		LOGINFO("DASH: deferred decrypt preparation complete (encrypted=%d, fbe=%d, pwtype=%d)\n",
++			DataManager::GetIntValue(TW_IS_ENCRYPTED), DataManager::GetIntValue(TW_IS_FBE),
++			DataManager::GetIntValue(TW_CRYPTO_PWTYPE));
++	}
++#endif
++
+ 	std::string value;
+ 	static char charging = ' ';
+ 	static int lastVal = -1;
+diff --git a/twrpApex.cpp b/twrpApex.cpp
+index 22da17a9..eb2dc41e 100755
+--- a/twrpApex.cpp
++++ b/twrpApex.cpp
+@@ -148,11 +148,17 @@ bool twrpApex::loadApexImage(std::string fileToMount, size_t loop_device_number)
+ 		return false;
+ 	}
+ 
++	off_t apex_size = lseek(fd, 0, SEEK_END);
++	if (apex_size < 0) {
++		LOGERR("Unable to determine apex payload size for %s: %s\n", fileToMount.c_str(), strerror(errno));
++		close(fd);
++		close(loop_fd);
++		return false;
++	}
+ 	close(fd);
+ 
+ 	memset(&info, 0, sizeof(struct loop_info64));
+ 	strlcpy((char*)info.lo_crypt_name, "twrpApex", LO_NAME_SIZE);
+-	off_t apex_size = lseek(fd, 0, SEEK_END);
+ 	info.lo_sizelimit = apex_size;
+ 	if (ioctl(loop_fd, LOOP_SET_STATUS64, &info)) {
+ 		LOGERR("failed to mount loop: %s: %s\n", fileToMount.c_str(), strerror(errno));
+diff --git a/etc/init/keystore2.predecrypt.rc b/etc/init/keystore2.predecrypt.rc
+new file mode 100644
+index 00000000..6e58fc15
+--- /dev/null
++++ b/etc/init/keystore2.predecrypt.rc
+@@ -0,0 +1,9 @@
++on property:twrp.predecrypt.hal_ready=1
++    start keystore2
++
++service keystore2 /system/bin/keystore2 /tmp/misc/keystore
++    class early_hal
++    user root
++    group keystore readproc log
++    writepid /dev/cpuset/foreground/tasks
++    seclabel u:r:recovery:s0

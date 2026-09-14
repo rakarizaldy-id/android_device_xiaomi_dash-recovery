@@ -1,0 +1,96 @@
+#!/system/bin/sh
+SCREEN="/proc/self/fd/$2"
+ZIPFILE="$3"
+TMPROOT="/tmp/ofox-dash-installer"
+WORK="$TMPROOT/pkg"
+
+ui_print() { echo -e "ui_print $*\nui_print" > "$SCREEN"; }
+cleanup() { cd /; rm -rf "$TMPROOT"; }
+abort() { ui_print "E: $*"; cleanup; exit 1; }
+
+ui_print "OrangeFox DASH installer"
+UNZIP="$(command -v unzip 2>/dev/null)"
+[ -n "$UNZIP" ] || abort "unzip is unavailable"
+rm -rf "$TMPROOT"; mkdir -p "$WORK" || abort "cannot create workspace"
+cd "$WORK" || abort "cannot enter workspace"
+"$UNZIP" -o "$ZIPFILE" >/dev/null 2>&1 || abort "cannot extract installer"
+
+BB="$WORK/tools/busybox"
+MB="$WORK/tools/magiskboot"
+chmod 0755 "$BB" "$MB" 2>/dev/null
+[ -x "$BB" ] || abort "busybox payload missing"
+[ -x "$MB" ] || abort "magiskboot payload missing"
+
+GETPROP="$(command -v getprop 2>/dev/null)"; [ -n "$GETPROP" ] || GETPROP=/system/bin/getprop
+[ -x "$GETPROP" ] || abort "getprop unavailable"
+DEV1="$($GETPROP ro.product.device)"; DEV2="$($GETPROP ro.product.vendor.device)"; DEV3="$($GETPROP ro.product.system.device)"
+if [ "$DEV1" != "dash" ] && [ "$DEV2" != "dash" ] && [ "$DEV3" != "dash" ]; then abort "package is for dash; detected $DEV1/$DEV2/$DEV3"; fi
+SLOT="$($GETPROP ro.boot.slot_suffix)"
+if [ "$SLOT" != "_a" ] && [ "$SLOT" != "_b" ]; then RAW_SLOT="$($GETPROP ro.boot.slot)"; [ "$RAW_SLOT" = a ] && SLOT=_a; [ "$RAW_SLOT" = b ] && SLOT=_b; fi
+[ "$SLOT" = _a ] || [ "$SLOT" = _b ] || abort "cannot determine active slot"
+PART="/dev/block/by-name/vendor_boot$SLOT"; [ -e "$PART" ] || abort "missing $PART"
+ui_print "Device: dash | slot: $SLOT | target: vendor_boot$SLOT only"
+
+ORIG="$TMPROOT/vendor_boot.orig.img"; FINAL="$TMPROOT/vendor_boot.final.img"; UNPACK="$TMPROOT/unpack"; AUDIT="$TMPROOT/audit"
+"$BB" dd if="$PART" of="$ORIG" bs=1048576 >/dev/null 2>&1 || abort "cannot dump current vendor_boot"
+ORIG_SIZE="$($BB wc -c < "$ORIG" | $BB tr -d ' ')"; ORIG_SHA="$($BB sha256sum "$ORIG" | $BB cut -d' ' -f1)"
+[ "$ORIG_SIZE" -gt 0 ] 2>/dev/null || abort "invalid carrier size"
+ui_print "Carrier: $ORIG_SIZE bytes | $ORIG_SHA"
+
+rm -rf "$UNPACK"; mkdir -p "$UNPACK"; cd "$UNPACK" || abort "cannot enter unpack workspace"
+cp "$ORIG" vendor_boot.img || abort "cannot stage carrier"
+"$MB" unpack -n vendor_boot.img >/dev/null 2>&1 || abort "cannot unpack vendor_boot"
+if [ -f vendor_ramdisk/recovery.cpio ]; then REC=vendor_ramdisk/recovery.cpio; elif [ -f vendor_ramdisk_recovery.cpio ]; then REC=vendor_ramdisk_recovery.cpio; else abort "no v4 recovery fragment found"; fi
+OLDMAGIC="$($BB od -An -tx1 -N4 "$REC" | $BB tr -d ' \n')"
+case "$OLDMAGIC" in
+  28b52ffd) PAY="$WORK/payload/ofox-recovery.zst" ;;
+  02214c18) PAY="$WORK/payload/ofox-recovery.lz4_legacy" ;;
+  *) abort "unsupported carrier recovery compression: $OLDMAGIC" ;;
+esac
+[ -f "$PAY" ] || abort "matching OrangeFox payload missing"
+PAY_SHA="$($BB sha256sum "$PAY" | $BB cut -d' ' -f1)"
+EXP_SHA="$($BB cat "$PAY.sha256" 2>/dev/null | $BB cut -d' ' -f1)"
+[ -n "$EXP_SHA" ] && [ "$PAY_SHA" = "$EXP_SHA" ] || abort "OrangeFox payload checksum mismatch"
+CURRENT_REC_SHA="$($BB sha256sum "$REC" | $BB cut -d' ' -f1)"
+ui_print "Carrier recovery magic: $OLDMAGIC | payload: $PAY_SHA"
+if [ "$CURRENT_REC_SHA" = "$PAY_SHA" ]; then
+    ui_print "OrangeFox recovery payload is already installed."
+    ui_print "No repack or partition write is needed."
+    cleanup
+    exit 0
+fi
+
+PLAT_SHA=""; DTB_SHA=""; BC_SHA=""
+[ -f vendor_ramdisk/ramdisk.cpio ] && PLAT_SHA="$($BB sha256sum vendor_ramdisk/ramdisk.cpio | $BB cut -d' ' -f1)"
+[ -f dtb ] && DTB_SHA="$($BB sha256sum dtb | $BB cut -d' ' -f1)"
+[ -f bootconfig ] && BC_SHA="$($BB sha256sum bootconfig | $BB cut -d' ' -f1)"
+"$BB" cp "$PAY" "$REC" || abort "cannot replace recovery fragment"
+"$MB" repack -n vendor_boot.img "$FINAL" >/dev/null 2>&1 || abort "magiskboot repack failed"
+FINAL_SIZE="$($BB wc -c < "$FINAL" | $BB tr -d ' ')"; [ "$FINAL_SIZE" = "$ORIG_SIZE" ] || abort "partition size changed: $FINAL_SIZE"
+FOOT_MAGIC="$($BB tail -c 64 "$FINAL" | $BB head -c 4)"; [ "$FOOT_MAGIC" = AVBf ] || abort "AVB footer missing after repack"
+ORIG_AVB="$($BB strings -t d -n 4 "$ORIG" | $BB awk '$2=="AVB0"{v=$1} END{print v}')"
+NEW_AVB="$($BB strings -t d -n 4 "$FINAL" | $BB awk '$2=="AVB0"{v=$1} END{print v}')"
+[ -n "$ORIG_AVB" ] && [ -n "$NEW_AVB" ] || abort "AVB0 structure missing"
+ui_print "AVB0: $ORIG_AVB -> $NEW_AVB"
+
+rm -rf "$AUDIT"; mkdir -p "$AUDIT"; cd "$AUDIT" || abort "cannot enter audit workspace"
+cp "$FINAL" vendor_boot.img || abort "cannot stage final audit image"
+"$MB" unpack -n vendor_boot.img >/dev/null 2>&1 || abort "final vendor_boot cannot be unpacked"
+if [ -f vendor_ramdisk/recovery.cpio ]; then AREC=vendor_ramdisk/recovery.cpio; elif [ -f vendor_ramdisk_recovery.cpio ]; then AREC=vendor_ramdisk_recovery.cpio; else abort "final recovery fragment missing"; fi
+[ "$($BB sha256sum "$AREC" | $BB cut -d' ' -f1)" = "$PAY_SHA" ] || abort "final recovery payload mismatch"
+[ -z "$PLAT_SHA" ] || [ "$($BB sha256sum vendor_ramdisk/ramdisk.cpio | $BB cut -d' ' -f1)" = "$PLAT_SHA" ] || abort "platform fragment changed"
+[ -z "$DTB_SHA" ] || [ "$($BB sha256sum dtb | $BB cut -d' ' -f1)" = "$DTB_SHA" ] || abort "DTB changed"
+[ -z "$BC_SHA" ] || [ "$($BB sha256sum bootconfig | $BB cut -d' ' -f1)" = "$BC_SHA" ] || abort "bootconfig changed"
+FINAL_SHA="$($BB sha256sum "$FINAL" | $BB cut -d' ' -f1)"
+ui_print "Patched carrier verified: $FINAL_SHA"
+
+restore_original() { ui_print "Restoring original vendor_boot$SLOT..."; "$BB" dd if="$ORIG" of="$PART" bs=1048576 >/dev/null 2>&1; "$BB" sync; }
+BLOCKDEV="$(command -v blockdev 2>/dev/null)"; [ -n "$BLOCKDEV" ] && "$BLOCKDEV" --setrw "$PART" >/dev/null 2>&1
+ui_print "Flashing vendor_boot$SLOT..."
+if ! "$BB" dd if="$FINAL" of="$PART" bs=1048576 >/dev/null 2>&1; then restore_original; abort "write failed; original restored"; fi
+"$BB" sync
+POST_SHA="$($BB sha256sum "$PART" | $BB cut -d' ' -f1)"
+if [ "$POST_SHA" != "$FINAL_SHA" ]; then restore_original; RESTORE_SHA="$($BB sha256sum "$PART" | $BB cut -d' ' -f1)"; [ "$RESTORE_SHA" = "$ORIG_SHA" ] || abort "verification failed and rollback hash is wrong"; abort "verification failed; original restored"; fi
+ui_print "Verified vendor_boot$SLOT: $POST_SHA"
+ui_print "Install complete. Other slot was NOT modified."
+cleanup; exit 0

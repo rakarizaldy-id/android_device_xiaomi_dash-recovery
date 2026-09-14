@@ -1,0 +1,8 @@
+cc_prebuilt_library_shared {
+    name: "dash_keymint_v3_compat",
+    srcs: ["android.hardware.security.keymint-V3-ndk.so"],
+    stem: "android.hardware.security.keymint-V3-ndk",
+    recovery: true,
+    strip: { none: true },
+    check_elf_files: false,
+}

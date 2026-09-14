@@ -1,4 +1,5 @@
 import /init.recovery.bootctl.rc
 import /init.recovery.project.rc
 import /init.recovery.crypto.rc
+import /init.recovery.persist.rc
 import /init.recovery.fastbootd.rc

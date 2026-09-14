@@ -1,0 +1,128 @@
+diff --git a/OrangeFox_A12.sh b/OrangeFox_A12.sh
+index 3472bce..9065cdf 100755
+--- a/OrangeFox_A12.sh
++++ b/OrangeFox_A12.sh
+@@ -387,6 +387,18 @@ if [ "$FOX_DRASTIC_SIZE_REDUCTION" = "1" -a "$(enabled $FOX_CUSTOM_BINS_TO_SDCAR
+    [ -z "$FOX_COMPRESS_EXECUTABLES" ] && export FOX_COMPRESS_EXECUTABLES=1
+ fi
+ 
++case "$TARGET_RECOVERY_ROOT_OUT" in
++  */dash/recovery/root)
++    export FOX_SETTINGS_ROOT_DIRECTORY="/persist"
++    export FOX_MISCELLANEOUS_ROOT_DIRECTORY="/sdcard"
++    export FOX_DELETE_MAGISK_ADDON=1
++    export FOX_DELETE_AROMAFM=1
++    export FOX_EXCLUDE_NANO_EDITOR=1
++    unset FOX_USE_NANO_EDITOR
++    rm -f "$FOX_RAMDISK"/*-timestamp "$FOX_RAMDISK"/system/bin/*_twrp-timestamp
++    ;;
++esac
++
+ if [ -n "$FOX_SETTINGS_ROOT_DIRECTORY" -a -z "$FOX_MISCELLANEOUS_ROOT_DIRECTORY" ]; then
+    export FOX_MISCELLANEOUS_ROOT_DIRECTORY="$FOX_SETTINGS_ROOT_DIRECTORY";
+ fi
+@@ -853,6 +865,53 @@ uses_toolbox() {
+  [ "$T" = "toybox" ] && echo "1" || echo "0"
+ }
+ 
++sync_core_gui_resources() {
++local ROOT="${FOX_MANIFEST_ROOT:-$PWD}"
++local SRC="$ROOT/bootable/recovery/gui/theme/common"
++local DST="$FOX_RAMDISK/twres"
++
++  if [ ! -d "$SRC/fonts" -o ! -d "$SRC/languages" ]; then
++     echo -e "${WHITEONRED}-- ERROR: OrangeFox common GUI resource source is incomplete: $SRC ${NC}"
++     abort 91
++  fi
++
++  mkdir -p "$DST/fonts" "$DST/languages" || abort 91
++  $CP -a "$SRC/fonts/." "$DST/fonts/" || abort 91
++  $CP -a "$SRC/languages/." "$DST/languages/" || abort 91
++
++  local FC=$(find "$DST/fonts" -maxdepth 1 -type f -name '*.ttf' | wc -l)
++  local LC=$(find "$DST/languages" -maxdepth 1 -type f -name '*.xml' | wc -l)
++  echo -e "${GREEN}-- Core GUI resources staged: ${FC} font(s), ${LC} language file(s) ${NC}"
++}
++
++validate_core_gui_resources() {
++local DST="$FOX_RAMDISK/twres"
++local missing=0
++local ref
++
++  if [ ! -f "$DST/languages/en.xml" ]; then
++     echo -e "${WHITEONRED}-- ERROR: missing default OrangeFox language: $DST/languages/en.xml ${NC}"
++     missing=1
++  fi
++
++  while IFS= read -r ref; do
++     [ -z "$ref" ] && continue
++     [[ "$ref" == *'%'* ]] && continue
++     [[ "$ref" == *'#'* ]] && continue
++     if [ ! -f "$DST/fonts/$ref" ]; then
++        echo -e "${WHITEONRED}-- ERROR: XML references missing OrangeFox font: $ref ${NC}"
++        missing=1
++     fi
++  done < <(grep -rhoE 'filename="[^"]+\.ttf"' "$DST" --include='*.xml' 2>/dev/null | sed -E 's/^filename="//; s/"$//' | sort -u)
++
++  if [ "$missing" != "0" ]; then
++     echo -e "${WHITEONRED}-- Refusing to package a recovery ramdisk with broken GUI resources. ${NC}"
++     abort 92
++  fi
++
++  echo -e "${GREEN}-- OrangeFox GUI resource validation passed. ${NC}"
++}
++
+ # drastic size reduction
+ # This can reduce the recovery image size by up to 3 MB
+ reduce_ramdisk_size() {
+@@ -1253,6 +1312,12 @@ if [ "$FOX_VENDOR_CMD" = "Fox_Before_Recovery_Image" ]; then
+   # copy over vendor FFiles/ and vendor sbin/ stuff before creating the boot image
+   #[ "$FOX_BUILD_DEBUG_MESSAGES" = "1" ] && echo "- FOX_BUILD_DEBUG_MESSAGES: Copying: $FOX_VENDOR_PATH/FoxExtras/* to $FOX_RAMDISK/"
+   $CP -pr $FOX_VENDOR_PATH/FoxExtras/* $FOX_RAMDISK/
++  case "$TARGET_RECOVERY_ROOT_OUT" in
++    */dash/recovery/root)
++      python3 "$FOX_MANIFEST_ROOT/device/xiaomi/dash/tools/patch_fox_addons.py" "$FOX_RAMDISK/FFiles" || abort 93
++      rm -rf "$FOX_RAMDISK/FFiles/OF_Del_Survival" "$FOX_RAMDISK/FFiles/OF_DelFRP" "$FOX_RAMDISK/FFiles/KernelSU"
++      ;;
++  esac
+ 
+   # if these directories don't already exist
+   mkdir -p $FOX_RAMDISK/$RAMDISK_ETC/
+@@ -1692,6 +1757,8 @@ if [ "$FOX_VENDOR_CMD" = "Fox_Before_Recovery_Image" ]; then
+   $CP -p $FOX_VENDOR_PATH/Files/translators.txt $FOX_RAMDISK/twres/translators.txt
+   $CP -p $FOX_VENDOR_PATH/Files/changelog.txt $FOX_RAMDISK/twres/changelog.txt
+ 
++  sync_core_gui_resources;
++
+   # if a local callback script is declared, run it, passing to it the ramdisk directory (first call)
+   if [ -n "$FOX_LOCAL_CALLBACK_SCRIPT" -a -f "$FOX_LOCAL_CALLBACK_SCRIPT" ]; then
+ 	bash $FOX_LOCAL_CALLBACK_SCRIPT "$FOX_RAMDISK" "--first-call"
+@@ -1710,6 +1777,12 @@ if [ "$FOX_VENDOR_CMD" = "Fox_Before_Recovery_Image" ]; then
+      reduce_ramdisk_size;
+   fi
+ 
++  case "$TARGET_RECOVERY_ROOT_OUT" in
++    */dash/recovery/root) find "$FOX_RAMDISK/FFiles" -type f -name README.txt -delete 2>/dev/null ;;
++  esac
++
++  validate_core_gui_resources;
++
+   # save the build date
+   BUILD_DATE=$(date -u "+%c")
+   BUILD_DATE_UTC=$(date "+%s")
+diff --git a/theme_installer/META-INF/com/google/android/update-binary b/theme_installer/META-INF/com/google/android/update-binary
+index ad67a6d..833216c 100755
+--- a/theme_installer/META-INF/com/google/android/update-binary
++++ b/theme_installer/META-INF/com/google/android/update-binary
+@@ -137,7 +137,10 @@ Main() {
+ 	[ -z "$fox_path" ] && fox_path=$internal_SD"/Fox"
+ 
+ 	THEME_FILE=$EX_DIR/ui.zip
+-	THEME_DEST="$fox_path/theme/"
++	case "$fox_path" in
++	  /persist/Fox*) THEME_DEST="$internal_SD/theme/" ;;
++	  *) THEME_DEST="$fox_path/theme/" ;;
++	esac
+ 	[ ! -d $THEME_DEST ] && mkdir -p $THEME_DEST
+ 	[ ! -d $THEME_DEST ] && {
+ 	   cleanup

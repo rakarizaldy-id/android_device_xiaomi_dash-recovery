@@ -1,51 +1,17 @@
-# Stock payloads
+# Local stock payloads
 
-This device tree depends on platform files from the matching stock DASH firmware.
+This repository contains the public device-tree source only. Proprietary Xiaomi/MediaTek payloads required by the tested DASH build are intentionally not redistributed.
 
-The proprietary payloads themselves are intentionally not redistributed in this repository.
+The validated extraction baseline is HyperOS `OS3.0.303.0.WPLIDXM` / Android 16 for `dash`.
 
-## Validated platform baseline
+Provide the omitted files locally at the paths referenced by the build files:
 
-| Item | Value |
-| --- | --- |
-| Stock build | `OS3.0.303.0.WPLIDXM` |
-| Platform | `mt6991` |
-| `vendor_boot` SHA-256 | `fa6e6755d64b4bcbba007000c1a237a4cc67cc921e99c2a06a123b81a7de1a5e` |
-| DTB SHA-256 | `2636d5a861e909f5bf32fb3b5c80b25824fbb6591e31a21b6b1326b6dc52d7e3` |
+- `compat/keymint_v3_prebuilt/android.hardware.security.keymint-V3-ndk.so`
+- `prebuilt/runtime/system/bin/dash_omapi_bridge`
+- `prebuilt/runtime/system/lib64/libdash_libcxx_compat.so`
+- binary payloads referenced by `crypto_payload.mk` under `proprietary/crypto/`
+- `proprietary/haptics/vendor/firmware/fs3002_haptic.bin`
 
-## Local layout
+The public VINTF/XML declarations are tracked in this repository. Runtime proprietary binaries and MiTEE trusted applications must come from the matching device firmware/build authority.
 
-Before building, provide the stock files expected by the tree:
-
-```text
-prebuilt/stock/vendor_boot.img
-prebuilt/stock/dtb/dash-id303.dtb
-proprietary/crypto/vendor/...
-```
-
-The crypto payload file list is defined by `crypto_payload.mk`.
-## Verification
-
-`stock_crypto_sha256sums.txt` contains the expected hashes for the recovery crypto payload set.
-
-`stock_vintf_sha256sums.txt` contains the expected hashes used by the platform preparation utilities.
-
-Always verify stock-derived files before using them in a build. Do not substitute payloads from another device or firmware family.
-
-## Platform handling
-
-The recovery ramdisk is built for the stock DASH `vendor_boot` v4 structure. The stock platform fragment, DTB, boot configuration, and other platform-owned components are not replaced by this device tree.
-
-Only the recovery-side content should be changed by recovery development.
-
-## Recovery USB OTG module preparation
-
-DASH stock DTBO advertises `mediatek,usb-offload` to the MTU3 host controller. The Android runtime provides the matching offload stack, but recovery does not use that Android userspace path.
-
-For the **recovery copy only**, prepare the matching stock `mtu3.ko` with:
-
-```text
-python3 tools/patch-recovery-mtu3-offload.py --input <stock-mtu3.ko> --output <recovery-mtu3.ko>
-```
-
-The tool performs a same-size, single-literal neutralization and refuses unexpected inputs. Do not modify the stock/system module. The Beta 2 recovery image uses this recovery-only preparation; DTB, DTBO and the stock platform authority are otherwise left unchanged.
+Do not substitute blobs from another device or firmware branch unless you have independently validated ABI and runtime compatibility.
