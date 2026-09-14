@@ -1,8 +1,7 @@
 # OrangeFox Recovery for POCO X8 Pro Max (`dash`)
 
-Unofficial OrangeFox R12.0 recovery device tree for Xiaomi `dash`, based on MediaTek MT6991 with a `vendor_boot` v4 / Virtual A/B layout.
+Unofficial OrangeFox R12.0 recovery device tree for Xiaomi `dash`
 
-> **Tested baseline:** HyperOS `OS3.0.303.0.WPLIDXM` · Android 16
 
 ## Device information
 
@@ -88,12 +87,6 @@ sepolicy/      Recovery SELinux policy
 src/           Device-specific recovery helpers
 tools/         Build and packaging tools
 ```
-
-## Building
-
-Clone this repository to `device/xiaomi/dash`, provide the required local stock payloads, apply the included patches, and build OrangeFox R12.0.
-
-Matching Xiaomi/MediaTek proprietary payloads are intentionally not redistributed in this public repository. See [`STOCK_PAYLOADS.md`](STOCK_PAYLOADS.md).
 
 ## Credits
 
