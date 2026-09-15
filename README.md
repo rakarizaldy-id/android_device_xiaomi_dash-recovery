@@ -32,10 +32,12 @@ Unofficial OrangeFox R12.0 recovery for Xiaomi/POCO `dash`.
 - ZIP and image flashing
 - Reboot modes
 - FastbootD
-- USB OTG host storage
+- USB OTG host storage — runtime tested
 - Haptics
 - Flashlight
 - Screenshots
+
+USB OTG storage is exposed through `/usb_otg` in `recovery.fstab` and appears in OrangeFox as `USB-Storage`.
 
 The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
 
