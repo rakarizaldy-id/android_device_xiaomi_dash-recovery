@@ -1,4 +1,3 @@
-# DASH recovery fstab — verified-boot mount verification intentionally disabled.
 system /system erofs ro wait,slotselect,logical,first_stage_mount
 system /system ext4 ro wait,slotselect,logical,first_stage_mount
 system_ext /system_ext erofs ro wait,slotselect,logical,first_stage_mount
@@ -30,5 +29,4 @@ mi_ext /mnt/vendor/mi_ext ext4 ro wait,slotselect,logical,first_stage_mount,nofa
 /dev/block/by-name/vbmeta_vendor /vbmeta_vendor emmc defaults slotselect,advbackup,flashimg,display="VBMeta Vendor"
 /dev/block/by-name/vendor_boot /vendor_boot emmc defaults slotselect,backup,flashimg,display="Vendor Boot"
 
-# OrangeFox USB OTG storage
-/usb_otg vfat /dev/block/sdd1 /dev/block/sdd flags=fsflags=utf8;display="USB-Storage";storage;wipeingui;removable
+/usb_otg auto /dev/block/sdd2 /dev/block/sdd flags=fsflags=utf8;display="USB-Storage";storage;wipeingui;removable
