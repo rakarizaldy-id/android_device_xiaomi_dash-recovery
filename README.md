@@ -26,10 +26,6 @@
 
 ## Status — Stable
 
-### Working
-
-
-
 ## Feature Status
 
 | Feature | Status | | Feature | Status |
