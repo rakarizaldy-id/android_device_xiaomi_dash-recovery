@@ -12,6 +12,12 @@
 [![Platform](https://img.shields.io/badge/Platform-mt6991-0891b2?style=for-the-badge)](#)
 [![Version](https://img.shields.io/badge/OrangeFox-R12.0-ea580c?style=for-the-badge)](#)
 
+[![Firmware](https://img.shields.io/badge/Firmware-OS3.0.303.0.WPLIDXM-2563eb?style=flat-square)](#)
+[![Android](https://img.shields.io/badge/Android-16-3ddc84?style=flat-square&logo=android&logoColor=white)](#)
+[![VendorBoot](https://img.shields.io/badge/vendor__boot-v4-7c3aed?style=flat-square)](#)
+[![Status](https://img.shields.io/badge/Status-Stable-16a34a?style=flat-square)](#)
+
+
 </div>
 
 
