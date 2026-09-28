@@ -1,8 +1,13 @@
-# OrangeFox Recovery for POCO X8 Pro Max (`dash`)
+<div align="center">
 
-Unofficial OrangeFox R12.0 recovery for Xiaomi/POCO `dash`.
 
-> **Tested baseline:** HyperOS `OS3.0.303.0.WPLIDXM` · Android 16
+# OrangeFox Recovery · R12.0
+
+### POCO X8 Pro Max `dash`.
+
+
+</div>
+
 
 ## Device information
 
@@ -23,32 +28,20 @@ Unofficial OrangeFox R12.0 recovery for Xiaomi/POCO `dash`.
 
 ### Working
 
-- Recovery boot
-- Display and touchscreen
-- FBE metadata and PIN/password decryption
-- Internal storage
-- MTP / ADB / sideload
-- Backup / Restore
-- ZIP and image flashing
-- Reboot modes
-- FastbootD
-- USB OTG host storage — runtime tested
-- Haptics
-- Flashlight
-- Screenshots
 
-USB OTG storage is exposed through `/usb_otg` in `recovery.fstab` and appears in OrangeFox as `USB-Storage`.
 
-The full `vendor_boot` image is the tested and recommended installation method for the supported HyperOS baseline.
+## Feature Status
 
-An experimental installer ZIP is also provided for compatible AOSP / LineageOS ROMs.
+| Feature | Status | | Feature | Status |
+|:---|:---:|:---:|:---|:---:|
+| Recovery boot | ✅ | | Reboot modes | ✅ |
+| Display & touchscreen | ✅ | | FastbootD | ✅ |
+| FBE metadata decryption | ✅ | | USB OTG | ✅ |
+| Internal storage | ✅ | | Haptics | ✅ |
+| MTP / ADB / sideload | ✅ | | Flashlight | ✅ |
+| Backup / Restore | ✅ | | Screenshots | ✅ |
+| ZIP & image flashing | ✅ | | RGB Indicator | ✅ |
 
-## Downloads
-
-| File | Description |
-| --- | --- |
-| `OrangeFox-R12.0-Unofficial-dash.img` | OrangeFox recovery image for the supported HyperOS baseline |
-| `OrangeFox-R12.0-Unofficial-dash-AOSP-Lineage-Installer.zip` | Experimental installer for compatible AOSP / LineageOS ROMs |
 
 ## Installation
 
@@ -72,21 +65,6 @@ Then reboot to recovery:
 
 ```text
 fastboot reboot recovery
-```
-
-## AOSP / LineageOS
-
-The AOSP / LineageOS installer is experimental and intended only for compatible `vendor_boot` v4 ROMs. HyperOS users should use the full `.img` release.
-
-## Source layout
-
-```text
-compat/        Compatibility modules
-patches/       OrangeFox compatibility patches for DASH
-recovery/      Recovery ramdisk configuration and runtime helpers
-sepolicy/      Recovery SELinux policy
-src/           Device-specific recovery helpers
-tools/         Build and packaging tools
 ```
 
 ## Credits
