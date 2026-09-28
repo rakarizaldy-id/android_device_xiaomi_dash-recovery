@@ -3,8 +3,8 @@
 
 # OrangeFox Recovery · R12.0
 
-### POCO X8 Pro Max
-### codename : dash
+### POCO X8 Pro Max (dash)
+
 <br>
 
 [![Device](https://img.shields.io/badge/Device-POCO_X8_Pro_Max-dc2626?style=for-the-badge&logo=xiaomi&logoColor=white)](#)
