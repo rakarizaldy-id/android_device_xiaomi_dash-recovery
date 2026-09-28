@@ -1,7 +1,7 @@
 <div align="center">
 
 
-# OrangeFox Recovery · POCO X8 Pro Max (dash) · R12.0
+# OrangeFox Recovery · POCO X8 Pro Max (dash)
 
 <br>
 
