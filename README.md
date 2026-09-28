@@ -2,9 +2,14 @@
 
 
 # OrangeFox Recovery · R12.0
-
+<br>
 ### · POCO X8 Pro Max `dash` ·
+<br>
 
+[![Device](https://img.shields.io/badge/Device-Redmi_Turbo_5_Max-dc2626?style=for-the-badge&logo=xiaomi&logoColor=white)](#)
+[![SoC](https://img.shields.io/badge/SoC-Dimensity_9500s-f97316?style=for-the-badge)](#)
+[![Platform](https://img.shields.io/badge/Platform-mt6991-0891b2?style=for-the-badge)](#)
+[![Version](https://img.shields.io/badge/OrangeFox-R12.0-ea580c?style=for-the-badge)](#)
 
 </div>
 
