@@ -1,0 +1,9 @@
+cc_prebuilt_binary {
+    name: "dash_touch_report",
+    srcs: ["prebuilt/runtime/system/bin/dash_touch_report"],
+    compile_multilib: "64",
+    recovery: true,
+    strip: {
+        none: true,
+    },
+}

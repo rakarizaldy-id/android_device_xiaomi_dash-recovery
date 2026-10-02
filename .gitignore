@@ -1,0 +1,7 @@
+out/
+*.img
+*.zip
+*.log
+*.tmp
+artifacts/
+reference/

@@ -1,0 +1,17 @@
+on early-init
+    mkdir /dev/block 0755 root root
+    mkdir /dev/block/bootdevice 0755 root root
+    symlink /dev/block/by-name /dev/block/bootdevice/by-name
+
+    mkdir /metadata 0771 system system
+    mkdir /mnt/vendor 0755 root system
+    mkdir /mnt/vendor/persist 0771 root system
+    mkdir /mnt/vendor/mi_ext 0755 root system
+    mkdir /odm 0755 root root
+    mkdir /vendor_dlkm 0755 root root
+
+on init
+    start servicemanager
+
+on boot
+    setprop sys.usb.config adb

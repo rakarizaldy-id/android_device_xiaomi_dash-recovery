@@ -1,0 +1,7 @@
+import /init.recovery.bootctl.rc
+import /init.recovery.project.rc
+import /init.recovery.crypto.rc
+import /init.recovery.persist.rc
+
+on property:twrp.modules.loaded=true
+    write /sys/bus/i2c/drivers/fs_haptic/1-0076/ram_update 1
